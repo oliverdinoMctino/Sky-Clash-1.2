@@ -1,0 +1,5912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sky Clash: Elemental Arena</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      color: white;
+      background:
+        radial-gradient(circle at top, #385cae 0%, #16234b 42%, #060816 100%);
+    }
+
+    .game-box {
+      width: min(1100px, 98vw);
+      text-align: center;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      outline: none;
+      border: 4px solid #b7f6ff;
+      border-radius: 16px;
+      background: #0c1434;
+      box-shadow: 0 0 18px #83eaff, 0 0 55px #5277ff99;
+      image-rendering: pixelated;
+    }
+
+    .controls {
+      margin: 8px 4px 0;
+      color: #e4f0ff;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      margin: 1px;
+      border: 1px solid #92b7fa;
+      border-bottom: 3px solid #4f6eaa;
+      border-radius: 4px;
+      background: #152243;
+      color: white;
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="game-box">
+    <canvas id="game" width="960" height="540" tabindex="0"></canvas>
+
+    <div class="controls">
+      <strong>Player 1:</strong>
+      <kbd>A</kbd><kbd>D</kbd> Move
+      <kbd>W</kbd> Jump
+      <kbd>F</kbd> Attack
+      <kbd>G</kbd> Special
+      <kbd>S</kbd> Shield / Parry
+      <kbd>Q</kbd> Ultimate
+
+      &nbsp; | &nbsp;
+
+      <strong>Player 2:</strong>
+      <kbd>←</kbd><kbd>→</kbd> Move
+      <kbd>↑</kbd> Jump
+      <kbd>K</kbd> Attack
+      <kbd>L</kbd> Special
+      <kbd>O</kbd> Shield / Parry
+      <kbd>I</kbd> Ultimate
+      <br />
+      <small>Attack while falling for an air attack. Press ESC to go back in menus.</small>
+    </div>
+  </div>
+
+<script>
+/* =========================================================
+   SKY CLASH: ELEMENTAL ARENA — ULTIMATE EDITION
+   PART 1 — Setup, sound, fighters, arenas, game data
+   ========================================================= */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+
+const keys = {};
+const justPressed = {};
+
+const blockedKeys = [
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"
+];
+
+window.addEventListener("keydown", (event) => {
+  if (blockedKeys.includes(event.code)) event.preventDefault();
+
+  if (!keys[event.code]) justPressed[event.code] = true;
+  keys[event.code] = true;
+
+  startAudio();
+});
+
+window.addEventListener("keyup", (event) => {
+  keys[event.code] = false;
+});
+
+canvas.addEventListener("click", () => {
+  canvas.focus();
+  startAudio();
+});
+
+/* ---------------------------
+   SOUND
+---------------------------- */
+let audioContext = null;
+let soundOn = true;
+
+function startAudio() {
+  if (!audioContext) {
+    const AudioAPI = window.AudioContext || window.webkitAudioContext;
+    if (AudioAPI) audioContext = new AudioAPI();
+  }
+
+  if (audioContext && audioContext.state === "suspended") {
+    audioContext.resume();
+  }
+}
+
+function playSound(type) {
+  if (!soundOn) return;
+
+  startAudio();
+  if (!audioContext) return;
+
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+
+  const now = audioContext.currentTime;
+
+  const sounds = {
+    menu:     ["triangle", 460, 680, 0.04, 0.08],
+    jump:     ["square",   220, 500, 0.04, 0.12],
+    attack:   ["sawtooth", 170,  65, 0.05, 0.12],
+    hit:      ["square",   140,  45, 0.07, 0.14],
+    special:  ["triangle", 280, 720, 0.06, 0.20],
+    ultimate: ["sawtooth", 120,  35, 0.08, 0.45],
+    parry:    ["sine",     650, 1200, 0.07, 0.20],
+    ko:       ["sawtooth", 250,  30, 0.08, 0.50]
+  };
+
+  const [wave, start, end, volume, duration] = sounds[type] || sounds.menu;
+
+  oscillator.type = wave;
+  oscillator.frequency.setValueAtTime(start, now);
+  oscillator.frequency.exponentialRampToValueAtTime(
+    Math.max(1, end),
+    now + duration
+  );
+
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+  oscillator.start(now);
+  oscillator.stop(now + duration);
+}
+
+/* ---------------------------
+   FIGHTERS — 12 TOTAL
+---------------------------- */
+const fighters = [
+  {
+    id: "zephyr",
+    name: "ZEPHYR",
+    title: "Wind Wanderer",
+    color: "#54d9e8",
+    dark: "#1675a4",
+    hair: "#e9ffff",
+    element: "#d5ffff",
+    accent: "#6cc9ff",
+    basicName: "Wind Headbutt",
+    airName: "Wind Dive",
+    specialName: "Gale Dance",
+    ultimateName: "Sky Cyclone",
+    homeStage: "CLOUD TEMPLE",
+    style: "scarf"
+  },
+  {
+    id: "volt",
+    name: "VOLT",
+    title: "Neon Runner",
+    color: "#9b7dff",
+    dark: "#4331a8",
+    hair: "#302269",
+    element: "#fff06a",
+    accent: "#ff70e8",
+    basicName: "Spark Punch",
+    airName: "Volt Stomp",
+    specialName: "Neon Flash",
+    ultimateName: "Thunder Crash",
+    homeStage: "NEON ROOFTOPS",
+    style: "visor"
+  },
+  {
+    id: "frost",
+    name: "FROST",
+    title: "Ice Guardian",
+    color: "#4b9fdd",
+    dark: "#195481",
+    hair: "#dcffff",
+    element: "#eaffff",
+    accent: "#84eaff",
+    basicName: "Ice Gauntlet Smash",
+    airName: "Glacier Drop",
+    specialName: "Frost Slide",
+    ultimateName: "Blizzard Burst",
+    homeStage: "FROZEN PEAKS",
+    style: "armour"
+  },
+  {
+    id: "magma",
+    name: "MAGMA",
+    title: "Molten Titan",
+    color: "#633d3f",
+    dark: "#251827",
+    hair: "#ff7134",
+    element: "#ff9b32",
+    accent: "#ffdb4f",
+    basicName: "Lava Fist",
+    airName: "Meteor Slam",
+    specialName: "Molten Uppercut",
+    ultimateName: "Volcanic Eruption",
+    homeStage: "MOLTEN CAVERN",
+    style: "lava"
+  },
+  {
+    id: "thunder",
+    name: "THUNDER",
+    title: "Storm Champion",
+    color: "#2e5fba",
+    dark: "#13265e",
+    hair: "#f7f5d8",
+    element: "#fff25d",
+    accent: "#77bfff",
+    basicName: "Storm Hammer",
+    airName: "Storm Stomp",
+    specialName: "Thunder Pose",
+    ultimateName: "Tempest Breaker",
+    homeStage: "STORM TOWER",
+    style: "cape"
+  },
+  {
+    id: "briar",
+    name: "BRIAR",
+    title: "Wild Guardian",
+    color: "#4f9e54",
+    dark: "#1f5636",
+    hair: "#d8b65b",
+    element: "#a8f06d",
+    accent: "#5fda7a",
+    basicName: "Vine Whip",
+    airName: "Leaf Dive",
+    specialName: "Thorn Twirl",
+    ultimateName: "Ancient Roots",
+    homeStage: "JUNGLE RUINS",
+    style: "leaves"
+  },
+  {
+    id: "prism",
+    name: "PRISM",
+    title: "Crystal Shaper",
+    color: "#9d62dc",
+    dark: "#412873",
+    hair: "#e9dcff",
+    element: "#7ff6ff",
+    accent: "#ff88ed",
+    basicName: "Crystal Jab",
+    airName: "Crystal Drop",
+    specialName: "Prism Performance",
+    ultimateName: "Rainbow Ray",
+    homeStage: "CRYSTAL MINES",
+    style: "crystal"
+  },
+  {
+    id: "orbit",
+    name: "ORBIT",
+    title: "Lunar Explorer",
+    color: "#6d83b7",
+    dark: "#273453",
+    hair: "#eaf3ff",
+    element: "#edf5ff",
+    accent: "#a58cff",
+    basicName: "Moon Kick",
+    airName: "Meteor Dive",
+    specialName: "Orbit Spin",
+    ultimateName: "Zero-G Zone",
+    homeStage: "MOON BASE",
+    style: "space"
+  },
+  {
+    id: "marina",
+    name: "MARINA",
+    title: "Tide Guardian",
+    color: "#2dbea9",
+    dark: "#116777",
+    hair: "#9dfff4",
+    element: "#8effff",
+    accent: "#4bbcff",
+    basicName: "Trident Jab",
+    airName: "Tidal Dive",
+    specialName: "Wave Waltz",
+    ultimateName: "Tsunami Surge",
+    homeStage: "WATER DOME",
+    style: "water"
+  },
+  {
+    id: "terra",
+    name: "TERRA",
+    title: "Stonebreaker",
+    color: "#9a7a4c",
+    dark: "#4d392b",
+    hair: "#6e9c54",
+    element: "#f2c66e",
+    accent: "#8bc46d",
+    basicName: "Boulder Fist",
+    airName: "Rock Drop",
+    specialName: "Stonebreaker Stance",
+    ultimateName: "Cave Quake",
+    homeStage: "ROCK CAVE TEMPLE",
+    style: "stone"
+  },
+  {
+    id: "nova",
+    name: "NOVA",
+    title: "Void Voyager",
+    color: "#6842a5",
+    dark: "#21133f",
+    hair: "#271244",
+    element: "#d28aff",
+    accent: "#7e9cff",
+    basicName: "Void Palm",
+    airName: "Gravity Crash",
+    specialName: "Starlight Warp",
+    ultimateName: "Event Horizon",
+    homeStage: "BLACK HOLE ARENA",
+    style: "void"
+  },
+  {
+    id: "inferno",
+    name: "INFERNO",
+    title: "Chain Warden",
+    color: "#a3332e",
+    dark: "#32151e",
+    hair: "#3a1218",
+    element: "#ff8737",
+    accent: "#ffd35a",
+    basicName: "Chain Fist",
+    airName: "Hell Drop",
+    specialName: "Chain Showcase",
+    ultimateName: "Hellgate",
+    homeStage: "HELL ARENA",
+    style: "chains"
+  }
+];
+
+/* ---------------------------
+   STAGES
+   Each arena has a different
+   platform layout and hazards.
+---------------------------- */
+const stages = [
+  {
+    name: "CLOUD TEMPLE",
+    theme: "sky",
+    platforms: [
+      { x: 205, y: 448, w: 550, h: 28 },
+      { x: 70, y: 350, w: 180, h: 22 },
+      { x: 710, y: 350, w: 180, h: 22 },
+      { x: 390, y: 270, w: 180, h: 22 },
+      { x: 145, y: 160, w: 135, h: 20 },
+      { x: 680, y: 160, w: 135, h: 20 },
+      { x: 410, y: 105, w: 140, h: 18, moving: true, startX: 410, range: 160, speed: 0.025, direction: "x" }
+    ],
+    hazards: ["windZone", "templeStone", "cloudZap", "birdSwoop"],
+    suddenHazards: ["tornado", "windTunnel"]
+  },
+  {
+    name: "NEON ROOFTOPS",
+    theme: "neon",
+    platforms: [
+      { x: 125, y: 450, w: 710, h: 28 },
+      { x: 45, y: 355, w: 190, h: 20 },
+      { x: 725, y: 355, w: 190, h: 20 },
+      { x: 350, y: 315, w: 260, h: 20 },
+      { x: 130, y: 220, w: 170, h: 20 },
+      { x: 670, y: 200, w: 165, h: 20 }
+    ],
+    hazards: ["electricFloor", "neonSign", "ventBlast", "billboardLaser"],
+    suddenHazards: ["ufoLaser", "electricFloor", "droneDash"]
+  },
+  {
+    name: "FROZEN PEAKS",
+    theme: "ice",
+    platforms: [
+      { x: 185, y: 450, w: 590, h: 28, slippery: true },
+      { x: 45, y: 360, w: 215, h: 20, slippery: true },
+      { x: 700, y: 360, w: 215, h: 20, slippery: true },
+      { x: 380, y: 285, w: 200, h: 20, slippery: true },
+      { x: 155, y: 195, w: 175, h: 20, slippery: true },
+      { x: 630, y: 190, w: 175, h: 20, slippery: true }
+    ],
+    hazards: ["icicle", "snowstorm", "avalanche", "freezingMist"],
+    suddenHazards: ["hail", "icicle", "snowstorm"]
+  },
+  {
+    name: "MOLTEN CAVERN",
+    theme: "magma",
+    platforms: [
+      { x: 145, y: 450, w: 670, h: 28 },
+      { x: 70, y: 360, w: 185, h: 20 },
+      { x: 705, y: 360, w: 185, h: 20 },
+      { x: 390, y: 325, w: 180, h: 20 },
+      { x: 175, y: 230, w: 170, h: 20 },
+      { x: 615, y: 230, w: 170, h: 20 }
+    ],
+    hazards: ["miniVolcano", "lavaBlob", "fireCrack", "hotRock"],
+    suddenHazards: ["risingLava", "miniVolcano", "emberRain"]
+  },
+  {
+    name: "STORM TOWER",
+    theme: "storm",
+    platforms: [
+      { x: 185, y: 450, w: 590, h: 28 },
+      { x: 50, y: 360, w: 205, h: 20 },
+      { x: 705, y: 360, w: 205, h: 20 },
+      { x: 375, y: 290, w: 210, h: 20 },
+      { x: 145, y: 200, w: 175, h: 20 },
+      { x: 640, y: 200, w: 175, h: 20 },
+      { x: 420, y: 110, w: 120, h: 18, moving: true, startX: 420, range: 115, speed: 0.03, direction: "x" }
+    ],
+    hazards: ["lightning", "rainGust", "towerBrick", "thunderClap"],
+    suddenHazards: ["lightningStorm", "lightningBall", "thunderClap"]
+  },
+  {
+    name: "JUNGLE RUINS",
+    theme: "jungle",
+    platforms: [
+      { x: 150, y: 450, w: 660, h: 28 },
+      { x: 55, y: 365, w: 180, h: 20 },
+      { x: 725, y: 365, w: 180, h: 20 },
+      { x: 385, y: 300, w: 190, h: 20 },
+      { x: 135, y: 220, w: 170, h: 20 },
+      { x: 655, y: 210, w: 170, h: 20 },
+      { x: 410, y: 125, w: 140, h: 18, moving: true, startX: 410, range: 125, speed: 0.026, direction: "x" }
+    ],
+    hazards: ["thornPatch", "monkeyBanana", "coconut", "vineGrab"],
+    suddenHazards: ["parrotPoop", "monkeyBanana", "thornPatch"]
+  },
+  {
+    name: "CRYSTAL MINES",
+    theme: "crystal",
+    platforms: [
+      { x: 170, y: 450, w: 620, h: 28 },
+      { x: 45, y: 355, w: 205, h: 20 },
+      { x: 710, y: 355, w: 205, h: 20 },
+      { x: 375, y: 290, w: 210, h: 20 },
+      { x: 140, y: 205, w: 170, h: 20 },
+      { x: 650, y: 205, w: 170, h: 20 },
+      { x: 410, y: 120, w: 135, h: 18, moving: true, startX: 410, range: 145, speed: 0.022, direction: "x" }
+    ],
+    hazards: ["crystalBeam", "jetpackMiner", "crystalSpike", "crystalFall"],
+    suddenHazards: ["gemShower", "crystalBeam", "mineCartRush"]
+  },
+  {
+    name: "MOON BASE",
+    theme: "moon",
+    lowGravity: true,
+    platforms: [
+      { x: 175, y: 450, w: 610, h: 28 },
+      { x: 45, y: 360, w: 210, h: 20 },
+      { x: 705, y: 360, w: 210, h: 20 },
+      { x: 375, y: 300, w: 210, h: 20 },
+      { x: 135, y: 200, w: 170, h: 20 },
+      { x: 655, y: 200, w: 170, h: 20 },
+      { x: 415, y: 105, w: 130, h: 18, moving: true, startY: 105, range: 100, speed: 0.027, direction: "y" }
+    ],
+    hazards: ["meteor", "satelliteLaser", "spaceJunk", "airlockBlast"],
+    suddenHazards: ["alienAttack", "meteor", "satelliteLaser"]
+  },
+  {
+    name: "WATER DOME",
+    theme: "water",
+    platforms: [
+      { x: 170, y: 455, w: 620, h: 25 },
+      { x: 70, y: 365, w: 170, h: 20 },
+      { x: 720, y: 365, w: 170, h: 20 },
+      { x: 385, y: 325, w: 190, h: 20 },
+      { x: 125, y: 245, w: 145, h: 20 },
+      { x: 690, y: 230, w: 145, h: 20 },
+      { x: 405, y: 135, w: 150, h: 18, moving: true, startX: 405, range: 120, speed: 0.02, direction: "x" }
+    ],
+    hazards: ["whirlpool", "jellyfish", "domeJet", "anchorFall"],
+    suddenHazards: ["risingWater", "sharkCrash", "whirlpool"]
+  },
+  {
+    name: "ROCK CAVE TEMPLE",
+    theme: "rock",
+    platforms: [
+      { x: 90, y: 455, w: 220, h: 25 },
+      { x: 365, y: 455, w: 230, h: 25 },
+      { x: 650, y: 455, w: 220, h: 25 },
+      { x: 125, y: 330, w: 130, h: 22 },
+      { x: 705, y: 330, w: 130, h: 22 },
+      { x: 405, y: 270, w: 150, h: 22 },
+      { x: 205, y: 175, w: 115, h: 22 },
+      { x: 640, y: 175, w: 115, h: 22 },
+      { x: 420, y: 100, w: 120, h: 18, moving: true, startX: 420, range: 100, speed: 0.018, direction: "x" }
+    ],
+    hazards: ["fallingBoulder", "rollingBoulder", "stoneSpear", "templeBeam"],
+    suddenHazards: ["collapse", "giantFaceBeam", "fallingBoulder"]
+  },
+  {
+    name: "BLACK HOLE ARENA",
+    theme: "blackhole",
+    platforms: [
+      { x: 330, y: 455, w: 300, h: 25 },
+      { x: 75, y: 385, w: 140, h: 18, moving: true, startX: 75, range: 45, speed: 0.025, direction: "y" },
+      { x: 745, y: 385, w: 140, h: 18, moving: true, startX: 745, range: 45, speed: 0.025, direction: "y" },
+      { x: 370, y: 300, w: 220, h: 18 },
+      { x: 160, y: 220, w: 115, h: 18 },
+      { x: 685, y: 190, w: 115, h: 18 },
+      { x: 430, y: 105, w: 100, h: 18, moving: true, startX: 430, range: 150, speed: 0.02, direction: "x" }
+    ],
+    hazards: ["gravityZone", "targetAsteroid", "warpRift", "spaceDebris"],
+    suddenHazards: ["asteroidRain", "gravityStorm", "spaceDebris"]
+  },
+  {
+    name: "HELL ARENA",
+    theme: "hell",
+    platforms: [
+      { x: 155, y: 455, w: 650, h: 25 },
+      { x: 55, y: 350, w: 160, h: 20, moving: true, startX: 55, range: 35, speed: 0.018, direction: "y" },
+      { x: 745, y: 350, w: 160, h: 20, moving: true, startX: 745, range: 35, speed: 0.018, direction: "y" },
+      { x: 395, y: 315, w: 170, h: 20, moving: true, startX: 395, range: 70, speed: 0.018, direction: "x" },
+      { x: 155, y: 195, w: 145, h: 20 },
+      { x: 660, y: 195, w: 145, h: 20 },
+      { x: 410, y: 110, w: 140, h: 18 }
+    ],
+    hazards: ["flamePillar", "flamingChain", "fallingObject", "fireHands"],
+    suddenHazards: ["devilAwakens", "flamePillar", "flamingChain"]
+  }
+];
+
+/* ---------------------------
+   TRAINING STAGE
+   Used only in Practice Mode.
+---------------------------- */
+const practiceStage = {
+  name: "TRAINING ROOM",
+  theme: "practice",
+  practice: true,
+  platforms: [
+    { x: 100, y: 450, w: 760, h: 28 },
+    { x: 160, y: 330, w: 180, h: 20 },
+    { x: 620, y: 330, w: 180, h: 20 },
+    { x: 390, y: 240, w: 180, h: 20 }
+  ],
+  hazards: [],
+  suddenHazards: []
+};
+
+/* ---------------------------
+   GAME STATE
+---------------------------- */
+let screen = "loading";
+let mode = "cpu"; // "cpu", "vs", or "practice"
+let difficulty = "hard";
+
+let p1Choice = 0;
+let p2Choice = 1;
+
+let p1Cursor = 0;
+let p2Cursor = 1;
+
+let stageChoice = 0;
+let selectStep = 0;
+
+let p1;
+let p2;
+let currentStage;
+
+let projectiles = [];
+let particles = [];
+let floatingTexts = [];
+let activeHazards = [];
+
+let frame = 0;
+let screenShake = 0;
+let flashTimer = 0;
+
+let gameOver = false;
+let winnerText = "";
+
+let loadingTimer = 0;
+let countdown = 0;
+let roundStarted = false;
+
+let matchTime = 75 * 60; // 1 minute 15 seconds at 60 FPS
+let suddenDeath = false;
+let suddenDeathStarting = false;
+let suddenTimer = 0;
+
+let comboCinematic = 0;
+let cinematicAttacker = null;
+let cinematicTarget = null;
+let cameraZoom = 1;
+let koTimer = 0;
+
+/* ---------------------------
+   CONTROLS
+---------------------------- */
+const p1Controls = {
+  left: "KeyA",
+  right: "KeyD",
+  jump: "KeyW",
+  attack: "KeyF",
+  special: "KeyG",
+  shield: "KeyS",
+  ultimate: "KeyQ"
+};
+
+const p2Controls = {
+  left: "ArrowLeft",
+  right: "ArrowRight",
+  jump: "ArrowUp",
+  attack: "KeyK",
+  special: "KeyL",
+  shield: "KeyO",
+  ultimate: "KeyI"
+};
+
+/* ---------------------------
+   HELPERS
+---------------------------- */
+function pressed(code) {
+  return !!justPressed[code];
+}
+
+function clamp(number, min, max) {
+  return Math.max(min, Math.min(max, number));
+}
+
+function rectHit(a, b) {
+  return (
+    a.x < b.x + b.w &&
+    a.x + a.w > b.x &&
+    a.y < b.y + b.h &&
+    a.y + a.h > b.y
+  );
+}
+
+function damageColor(damage) {
+  if (damage >= 200) return "#ff2940";
+  if (damage >= 150) return "#ff5c36";
+  if (damage >= 100) return "#ff9b36";
+  if (damage >= 50) return "#ffe75b";
+  return "#ffffff";
+}
+
+function addParticles(x, y, color, amount, speed = 3, life = 25) {
+  for (let i = 0; i < amount; i++) {
+    particles.push({
+      x,
+      y,
+      vx: (Math.random() - 0.5) * speed * 2,
+      vy: (Math.random() - 0.5) * speed * 2,
+      life: life + Math.random() * 10,
+      maxLife: life + 10,
+      size: 2 + Math.random() * 5,
+      color,
+      gravity: 0.08
+    });
+  }
+}
+
+function addText(x, y, text, color = "#ffffff") {
+  floatingTexts.push({
+    x,
+    y,
+    text,
+    color,
+    life: 45,
+    vy: -1.1
+  });
+}
+
+function getOpponent(player) {
+  return player.number === 1 ? p2 : p1;
+}
+
+function isHomeArena(player) {
+  return currentStage &&
+    player.fighter.homeStage === currentStage.name;
+}
+
+function randomPlayer() {
+  return Math.random() < 0.5 ? p1 : p2;
+}
+
+/* Hazard strength becomes more dangerous
+   when a fighter already has high damage. */
+function hazardPowerFor(player, basePower) {
+  const extra = 1 + player.damage / 100;
+  return basePower * extra;
+}
+
+/* ---------------------------
+   PLAYERS
+---------------------------- */
+function createPlayer(number, fighterIndex, x, y, controls) {
+  const fighter = fighters[fighterIndex];
+  const heavy = fighter.id === "frost" ||
+    fighter.id === "magma" ||
+    fighter.id === "terra";
+
+  return {
+    number,
+    fighterIndex,
+    fighter,
+    controls,
+
+    x,
+    y,
+    spawnX: x,
+    spawnY: y,
+
+    w: heavy ? 40 : 34,
+    h: heavy ? 56 : 52,
+
+    vx: 0,
+    vy: 0,
+    facing: number === 1 ? 1 : -1,
+
+    grounded: false,
+    onSlippery: false,
+    airJumps: 0,
+
+    damage: 0,
+    lives: 3,
+    meter: 0,
+
+    attackTimer: 0,
+    airAttackTimer: 0,
+    specialTimer: 0,
+    ultimateTimer: 0,
+
+    cooldown: 0,
+    specialCooldown: 0,
+    ultimateCooldown: 0,
+
+    shield: 100,
+    shielding: false,
+    parryTimer: 0,
+    shieldBroken: 0,
+
+    invincible: 70,
+    stunned: 0,
+    slowTimer: 0,
+    trailTimer: 0,
+    hitThisMove: false,
+
+    combo: 0,
+    comboTimer: 0,
+    lastHitType: "",
+
+    dashDirection: 0,
+    idleOffset: Math.random() * Math.PI * 2,
+
+    cpuThinkTimer: 0,
+    cpuPlan: "approach"
+  };
+}
+
+function resetPlayer(player, keepLives = true) {
+  player.x = player.spawnX;
+  player.y = player.spawnY;
+  player.vx = 0;
+  player.vy = 0;
+
+  player.damage = 0;
+  player.meter = 0;
+
+  player.attackTimer = 0;
+  player.airAttackTimer = 0;
+  player.specialTimer = 0;
+  player.ultimateTimer = 0;
+
+  player.cooldown = 30;
+  player.specialCooldown = 45;
+  player.ultimateCooldown = 0;
+
+  player.shield = 100;
+  player.shieldBroken = 0;
+  player.parryTimer = 0;
+  player.shielding = false;
+
+  player.invincible = 90;
+  player.stunned = 0;
+  player.slowTimer = 0;
+  player.trailTimer = 0;
+
+  player.combo = 0;
+  player.comboTimer = 0;
+  player.airJumps = 0;
+
+  if (!keepLives) player.lives = 3;
+}
+
+function startMatch() {
+  currentStage = mode === "practice" ? practiceStage : stages[stageChoice];
+
+  p1 = createPlayer(1, p1Choice, 300, 355, p1Controls);
+  p2 = createPlayer(2, p2Choice, 620, 355, p2Controls);
+
+  if (mode === "practice") {
+    p1.lives = 99;
+    p2.lives = 99;
+  }
+
+  projectiles = [];
+  particles = [];
+  floatingTexts = [];
+  activeHazards = [];
+
+  frame = 0;
+  screenShake = 0;
+  flashTimer = 0;
+  gameOver = false;
+  winnerText = "";
+
+  matchTime = 75 * 60;
+  suddenDeath = false;
+  suddenDeathStarting = false;
+  suddenTimer = 0;
+
+  comboCinematic = 0;
+  cinematicAttacker = null;
+  cinematicTarget = null;
+  cameraZoom = 1;
+  koTimer = 0;
+
+  countdown = 150;
+  roundStarted = false;
+
+  screen = "play";
+  canvas.focus();
+}
+/* =========================================================
+   PART 2 — Menus, better CPU, movement, combat, combos
+   Paste directly after Part 1.
+   ========================================================= */
+
+/* ---------------------------
+   MENU INPUT + BACK BUTTON
+---------------------------- */
+function moveGridCursor(cursor, direction) {
+  const columns = 4;
+  const rows = 3;
+
+  let col = cursor % columns;
+  let row = Math.floor(cursor / columns);
+
+  if (direction === "left") col = (col + columns - 1) % columns;
+  if (direction === "right") col = (col + 1) % columns;
+  if (direction === "up") row = (row + rows - 1) % rows;
+  if (direction === "down") row = (row + 1) % rows;
+
+  return row * columns + col;
+}
+
+function updateMenu() {
+  /* Animated loading screen */
+  if (screen === "loading") {
+    loadingTimer++;
+
+    if (loadingTimer > 185 || pressed("Enter") || pressed("Space")) {
+      screen = "title";
+      playSound("special");
+    }
+    return;
+  }
+
+  /* Title screen choices */
+  if (screen === "title") {
+    if (pressed("Digit1")) {
+      mode = "cpu";
+      difficulty = "hard";
+      selectStep = 0;
+      screen = "select";
+      playSound("menu");
+    }
+
+    if (pressed("Digit2")) {
+      mode = "vs";
+      selectStep = 0;
+      screen = "select";
+      playSound("menu");
+    }
+
+    if (pressed("Digit3")) {
+      mode = "practice";
+      difficulty = "hard";
+      selectStep = 0;
+      screen = "select";
+      playSound("menu");
+    }
+
+    if (pressed("KeyM")) {
+      soundOn = !soundOn;
+      playSound("menu");
+    }
+
+    return;
+  }
+
+  /* Character select */
+  if (screen === "select") {
+    if (selectStep === 0) {
+      /* Player 1 moves blue cursor */
+      if (pressed("KeyA")) {
+        p1Cursor = moveGridCursor(p1Cursor, "left");
+        p1Choice = p1Cursor;
+        playSound("menu");
+      }
+
+      if (pressed("KeyD")) {
+        p1Cursor = moveGridCursor(p1Cursor, "right");
+        p1Choice = p1Cursor;
+        playSound("menu");
+      }
+
+      if (pressed("KeyW")) {
+        p1Cursor = moveGridCursor(p1Cursor, "up");
+        p1Choice = p1Cursor;
+        playSound("menu");
+      }
+
+      if (pressed("KeyS")) {
+        p1Cursor = moveGridCursor(p1Cursor, "down");
+        p1Choice = p1Cursor;
+        playSound("menu");
+      }
+
+      /* CPU/player 2 cursor */
+      if (pressed("ArrowLeft")) {
+        p2Cursor = moveGridCursor(p2Cursor, "left");
+        p2Choice = p2Cursor;
+        playSound("menu");
+      }
+
+      if (pressed("ArrowRight")) {
+        p2Cursor = moveGridCursor(p2Cursor, "right");
+        p2Choice = p2Cursor;
+        playSound("menu");
+      }
+
+      if (pressed("ArrowUp")) {
+        p2Cursor = moveGridCursor(p2Cursor, "up");
+        p2Choice = p2Cursor;
+        playSound("menu");
+      }
+
+      if (pressed("ArrowDown")) {
+        p2Cursor = moveGridCursor(p2Cursor, "down");
+        p2Choice = p2Cursor;
+        playSound("menu");
+      }
+
+      /* CPU difficulty */
+      if (mode === "cpu" || mode === "practice") {
+        if (pressed("Digit1")) difficulty = "easy";
+        if (pressed("Digit2")) difficulty = "medium";
+        if (pressed("Digit3")) difficulty = "hard";
+
+        if (pressed("KeyF") || pressed("Enter")) {
+          selectStep = 1;
+          playSound("menu");
+        }
+      }
+
+      /* Two-player confirmation */
+      if (mode === "vs") {
+        if (pressed("KeyF") && pressed("KeyK")) {
+          selectStep = 1;
+          playSound("menu");
+        }
+      }
+
+      if (pressed("Escape")) {
+        screen = "title";
+        playSound("menu");
+      }
+
+      return;
+    }
+
+    /* Stage select */
+    if (selectStep === 1) {
+      if (mode === "practice") {
+        /* Practice always uses Training Room */
+        if (pressed("KeyF") || pressed("Enter")) {
+          startMatch();
+          playSound("menu");
+        }
+
+        if (pressed("Escape")) {
+          selectStep = 0;
+          playSound("menu");
+        }
+
+        return;
+      }
+
+      if (pressed("KeyA") || pressed("ArrowLeft")) {
+        stageChoice = (stageChoice + stages.length - 1) % stages.length;
+        playSound("menu");
+      }
+
+      if (pressed("KeyD") || pressed("ArrowRight")) {
+        stageChoice = (stageChoice + 1) % stages.length;
+        playSound("menu");
+      }
+
+      if (pressed("KeyF") || pressed("Enter")) {
+        startMatch();
+        playSound("menu");
+      }
+
+      if (pressed("Escape")) {
+        selectStep = 0;
+        playSound("menu");
+      }
+    }
+
+    return;
+  }
+
+  /* Game over screen */
+  if (screen === "over") {
+    if (pressed("KeyR") || pressed("Enter")) {
+      screen = "select";
+      selectStep = 0;
+      playSound("menu");
+    }
+
+    if (pressed("Escape")) {
+      screen = "title";
+      playSound("menu");
+    }
+  }
+}
+
+/* ---------------------------
+   MOVING PLATFORMS
+---------------------------- */
+function updatePlatforms() {
+  for (const platform of currentStage.platforms) {
+    if (!platform.moving) continue;
+
+    platform.previousX = platform.x;
+    platform.previousY = platform.y;
+
+    if (platform.direction === "x") {
+      const start = platform.startX ?? platform.x;
+
+      platform.x =
+        start +
+        Math.sin(frame * platform.speed) * platform.range;
+    }
+
+    if (platform.direction === "y") {
+      const start = platform.startY ?? platform.y;
+
+      platform.y =
+        start +
+        Math.sin(frame * platform.speed) * platform.range;
+    }
+
+    platform.moveX = platform.x - platform.previousX;
+    platform.moveY = platform.y - platform.previousY;
+  }
+}
+
+/* ---------------------------
+   BETTER CPU
+---------------------------- */
+function cpuInput(player, opponent) {
+  const input = {
+    left: false,
+    right: false,
+    jump: false,
+    attack: false,
+    special: false,
+    shield: false,
+    ultimate: false
+  };
+
+  if (!roundStarted || player.stunned > 0) return input;
+
+  const skill = difficulty === "easy"
+    ? 0.42
+    : difficulty === "medium"
+      ? 0.72
+      : 0.95;
+
+  const distance = opponent.x - player.x;
+  const absDistance = Math.abs(distance);
+  const opponentAbove = opponent.y + 28 < player.y;
+  const opponentAttacking =
+    opponent.attackTimer > 0 ||
+    opponent.airAttackTimer > 0 ||
+    opponent.specialTimer > 0 ||
+    opponent.ultimateTimer > 0;
+
+  /* CPU makes a small plan every few frames */
+  if (player.cpuThinkTimer <= 0) {
+    player.cpuThinkTimer = difficulty === "hard" ? 8 : 15;
+
+    if (absDistance > 220) {
+      player.cpuPlan = "approach";
+    } else if (absDistance < 65) {
+      player.cpuPlan = Math.random() < 0.45 ? "attack" : "retreat";
+    } else {
+      player.cpuPlan = Math.random() < 0.55 ? "attack" : "approach";
+    }
+  } else {
+    player.cpuThinkTimer--;
+  }
+
+  /* Easy CPU sometimes pauses */
+  if (Math.random() > skill) return input;
+
+  /* Shield likely attacks */
+  if (
+    opponentAttacking &&
+    absDistance < 95 &&
+    Math.random() < 0.05 + skill * 0.22
+  ) {
+    input.shield = true;
+  }
+
+  /* Move toward opponent */
+  if (player.cpuPlan === "approach") {
+    if (distance < -42) input.left = true;
+    if (distance > 42) input.right = true;
+  }
+
+  /* Move away if too close sometimes */
+  if (player.cpuPlan === "retreat") {
+    if (distance < 0) input.right = true;
+    if (distance > 0) input.left = true;
+  }
+
+  /* Jump toward high opponents or dodge */
+  if (
+    player.grounded &&
+    (
+      opponentAbove ||
+      (opponentAttacking && absDistance < 85) ||
+      Math.random() < 0.008 * skill
+    )
+  ) {
+    input.jump = true;
+  }
+
+  /* Basic attack near target */
+  if (
+    absDistance < 78 &&
+    Math.random() < 0.06 + skill * 0.25
+  ) {
+    input.attack = true;
+  }
+
+  /* Use special at medium distance */
+  if (
+    absDistance > 75 &&
+    absDistance < 320 &&
+    player.specialCooldown <= 0 &&
+    Math.random() < 0.012 + skill * 0.06
+  ) {
+    input.special = true;
+  }
+
+  /* Use special near an opponent too */
+  if (
+    absDistance < 90 &&
+    player.specialCooldown <= 0 &&
+    Math.random() < 0.008 + skill * 0.035
+  ) {
+    input.special = true;
+  }
+
+  /* Ultimate */
+  if (
+    player.meter >= 100 &&
+    player.ultimateCooldown <= 0 &&
+    absDistance < 220 &&
+    Math.random() < 0.01 + skill * 0.08
+  ) {
+    input.ultimate = true;
+  }
+
+  return input;
+}
+
+function playerInput(player) {
+  if (player.number === 2 && (mode === "cpu" || mode === "practice")) {
+    return cpuInput(player, p1);
+  }
+
+  const c = player.controls;
+
+  return {
+    left: !!keys[c.left],
+    right: !!keys[c.right],
+    jump: pressed(c.jump),
+    attack: !!keys[c.attack],
+    special: !!keys[c.special],
+    shield: !!keys[c.shield],
+    ultimate: !!keys[c.ultimate]
+  };
+}
+
+/* ---------------------------
+   COMBAT
+---------------------------- */
+function startComboCinematic(attacker, target, title, color) {
+  if (comboCinematic > 0) return;
+
+  comboCinematic = 30;
+  cinematicAttacker = attacker;
+  cinematicTarget = target;
+
+  target.stunned = Math.max(target.stunned, 18);
+
+  addText(
+    WIDTH / 2,
+    HEIGHT / 2 - 70,
+    title,
+    color
+  );
+
+  addParticles(
+    target.x + target.w / 2,
+    target.y + target.h / 2,
+    color,
+    24,
+    6,
+    32
+  );
+
+  screenShake = 8;
+}
+
+function hurt(target, attacker, direction, baseDamage, basePower, color, hitType = "basic") {
+  if (target.invincible > 0) return false;
+
+  /* Perfect parry */
+  if (target.parryTimer > 0) {
+    attacker.stunned = 35;
+    attacker.vx = -direction * 5;
+    attacker.vy = -5;
+
+    target.meter = clamp(target.meter + 20, 0, 100);
+
+    addParticles(
+      target.x + target.w / 2,
+      target.y + target.h / 2,
+      "#ffffff",
+      24,
+      5
+    );
+
+    addText(
+      target.x + target.w / 2,
+      target.y - 12,
+      "PERFECT PARRY!",
+      "#ffffff"
+    );
+
+    screenShake = 7;
+    flashTimer = 5;
+    playSound("parry");
+
+    return false;
+  }
+
+  /* Shield */
+  if (target.shielding && target.shield > 0) {
+    target.shield -= baseDamage * 3.2;
+    target.meter = clamp(target.meter + baseDamage * 0.75, 0, 100);
+    target.vx = direction * 1.4;
+
+    addParticles(
+      target.x + target.w / 2,
+      target.y + target.h / 2,
+      "#90efff",
+      8,
+      2
+    );
+
+    if (target.shield <= 0) {
+      target.shield = 0;
+      target.shieldBroken = 105;
+      target.stunned = 55;
+
+      addText(
+        target.x + target.w / 2,
+        target.y - 12,
+        "SHIELD BREAK!",
+        "#fff16b"
+      );
+
+      addParticles(
+        target.x + target.w / 2,
+        target.y + target.h / 2,
+        "#fff16b",
+        30,
+        6
+      );
+
+      screenShake = 10;
+    }
+
+    return false;
+  }
+
+  playSound("hit");
+
+  /* Combo bonus: only small extra damage */
+  let comboBonus = 0;
+
+  if (attacker.comboTimer > 0) {
+    attacker.combo++;
+  } else {
+    attacker.combo = 1;
+  }
+
+  attacker.comboTimer = 58;
+  attacker.lastHitType = hitType;
+
+  if (attacker.combo === 3) {
+    comboBonus = 2;
+    startComboCinematic(
+      attacker,
+      target,
+      "3 HIT COMBO!",
+      attacker.fighter.element
+    );
+  }
+
+  if (
+    attacker.combo >= 2 &&
+    (hitType === "special" || hitType === "air")
+  ) {
+    comboBonus = Math.max(comboBonus, 3);
+
+    startComboCinematic(
+      attacker,
+      target,
+      hitType === "special" ? "SPECIAL FINISH!" : "AIR FINISH!",
+      attacker.fighter.element
+    );
+  }
+
+  target.damage = clamp(target.damage + baseDamage + comboBonus, 0, 999);
+  target.meter = clamp(target.meter + baseDamage * 1.2, 0, 100);
+  attacker.meter = clamp(attacker.meter + baseDamage * 1.65, 0, 100);
+
+  const damageMultiplier = 1 + target.damage / 85;
+  const knockback = basePower * damageMultiplier;
+
+  target.vx = direction * knockback;
+  target.vy = -Math.min(18, 3.8 + knockback * 0.72);
+  target.grounded = false;
+
+  target.invincible = 13;
+  target.trailTimer = 20;
+
+  addParticles(
+    target.x + target.w / 2,
+    target.y + target.h / 2,
+    color,
+    15,
+    4 + basePower / 2
+  );
+
+  addParticles(
+    target.x + target.w / 2,
+    target.y + target.h / 2,
+    "#ffffff",
+    5,
+    3
+  );
+
+  screenShake = Math.min(15, Math.floor(basePower + 2));
+
+  return true;
+}
+
+/* ---------------------------
+   PROJECTILES
+---------------------------- */
+function createProjectile(player, kind, extra = {}) {
+  const direction = player.facing;
+  const f = player.fighter;
+
+  const shot = {
+    x: player.x + (direction === 1 ? player.w : -20),
+    y: player.y + 15,
+    w: 20,
+    h: 20,
+    vx: direction * 8,
+    vy: 0,
+    gravity: 0,
+    life: 90,
+    owner: player,
+    kind,
+    color: f.element,
+    damage: 10,
+    power: 5.5,
+    pull: 0
+  };
+
+  if (kind === "wind") {
+    shot.w = 28;
+    shot.h = 24;
+    shot.vx = direction * 7;
+    shot.damage = 11;
+    shot.power = 6;
+    shot.color = "#d8ffff";
+  }
+
+  if (kind === "ice") {
+    shot.w = 18;
+    shot.h = 26;
+    shot.vx = direction * 9;
+    shot.damage = 10;
+    shot.power = 5.5;
+    shot.color = "#eaffff";
+  }
+
+  if (kind === "lava") {
+    shot.w = 25;
+    shot.h = 25;
+    shot.vx = direction * 6;
+    shot.vy = -2;
+    shot.gravity = 0.12;
+    shot.damage = 14;
+    shot.power = 7.5;
+    shot.color = "#ff7d2e";
+  }
+
+  if (kind === "lightning") {
+    shot.w = 16;
+    shot.h = 34;
+    shot.vx = direction * 12;
+    shot.damage = 12;
+    shot.power = 7.5;
+    shot.color = "#fff36a";
+  }
+
+  if (kind === "thorn") {
+    shot.w = 20;
+    shot.h = 20;
+    shot.vx = direction * 7;
+    shot.vy = -2.5;
+    shot.gravity = 0.14;
+    shot.damage = 11;
+    shot.power = 6;
+    shot.color = "#a8f06d";
+  }
+
+  if (kind === "crystal") {
+    shot.w = 16;
+    shot.h = 16;
+    shot.vx = direction * 9;
+    shot.damage = 9;
+    shot.power = 5.5;
+    shot.color = "#7ff6ff";
+  }
+
+  if (kind === "gravity") {
+    shot.w = 30;
+    shot.h = 30;
+    shot.vx = direction * 3.6;
+    shot.life = 105;
+    shot.damage = 8;
+    shot.power = 5;
+    shot.color = "#edf5ff";
+    shot.pull = 0.18;
+  }
+
+  if (kind === "water") {
+    shot.w = 30;
+    shot.h = 22;
+    shot.vx = direction * 7.4;
+    shot.damage = 12;
+    shot.power = 6.8;
+    shot.color = "#8effff";
+  }
+
+  if (kind === "rock") {
+    shot.w = 25;
+    shot.h = 25;
+    shot.vx = direction * 5.7;
+    shot.vy = -1.5;
+    shot.gravity = 0.1;
+    shot.damage = 14;
+    shot.power = 8;
+    shot.color = "#f2c66e";
+  }
+
+  if (kind === "void") {
+    shot.w = 26;
+    shot.h = 26;
+    shot.vx = direction * 6;
+    shot.damage = 12;
+    shot.power = 6.7;
+    shot.color = "#d28aff";
+    shot.pull = 0.1;
+  }
+
+  if (kind === "chain") {
+    shot.w = 38;
+    shot.h = 14;
+    shot.vx = direction * 8;
+    shot.damage = 13;
+    shot.power = 7.2;
+    shot.color = "#ff8737";
+  }
+
+  Object.assign(shot, extra);
+  projectiles.push(shot);
+}
+
+/* ---------------------------
+   SPECIAL ATTACKS
+---------------------------- */
+function useSpecial(player) {
+  const id = player.fighter.id;
+
+  player.specialCooldown = 68;
+  player.hitThisMove = false;
+
+  addText(
+    player.x + player.w / 2,
+    player.y - 18,
+    player.fighter.specialName.toUpperCase(),
+    player.fighter.element
+  );
+
+  addParticles(
+    player.x + player.w / 2,
+    player.y + player.h / 2,
+    player.fighter.element,
+    15,
+    4
+  );
+
+  playSound("special");
+
+  if (id === "zephyr") {
+    player.specialTimer = 18;
+    player.dashDirection = player.facing;
+  }
+
+  if (id === "volt") {
+    player.specialTimer = 17;
+    player.dashDirection = player.facing;
+    player.vx = player.facing * 12;
+  }
+
+  if (id === "frost") {
+    player.specialTimer = 20;
+    player.dashDirection = player.facing;
+    player.vx = player.facing * 8;
+  }
+
+  if (id === "magma") {
+    player.specialTimer = 16;
+  }
+
+  if (id === "thunder") {
+    createProjectile(player, "lightning");
+  }
+
+  if (id === "briar") {
+    player.specialTimer = 20;
+  }
+
+  if (id === "prism") {
+    createProjectile(player, "crystal", { vy: -1.4 });
+    createProjectile(player, "crystal", { vy: 0 });
+    createProjectile(player, "crystal", { vy: 1.4 });
+  }
+
+  if (id === "orbit") {
+    player.specialTimer = 20;
+  }
+
+  if (id === "marina") {
+    createProjectile(player, "water");
+  }
+
+  if (id === "terra") {
+    player.specialTimer = 20;
+  }
+
+  if (id === "nova") {
+    /* Stylish teleport attack */
+    player.specialTimer = 12;
+    player.x += player.facing * 110;
+    player.x = clamp(player.x, 15, WIDTH - player.w - 15);
+  }
+
+  if (id === "inferno") {
+    createProjectile(player, "chain");
+  }
+}
+
+/* ---------------------------
+   ULTIMATE
+---------------------------- */
+function startUltimate(player) {
+  player.meter = 0;
+  player.ultimateTimer = 35;
+  player.ultimateCooldown = 110;
+  player.hitThisMove = false;
+
+  cameraZoom = 1.08;
+  screenShake = 8;
+  flashTimer = 6;
+
+  playSound("ultimate");
+
+  addText(
+    WIDTH / 2,
+    100,
+    player.fighter.ultimateName.toUpperCase(),
+    player.fighter.element
+  );
+
+  addParticles(
+    player.x + player.w / 2,
+    player.y + player.h / 2,
+    player.fighter.element,
+    34,
+    6,
+    35
+  );
+}
+
+/* ---------------------------
+   PLAYER UPDATE
+---------------------------- */
+function updatePlayer(player, opponent) {
+  const input = playerInput(player);
+
+  if (player.invincible > 0) player.invincible--;
+  if (player.cooldown > 0) player.cooldown--;
+  if (player.specialCooldown > 0) player.specialCooldown--;
+  if (player.ultimateCooldown > 0) player.ultimateCooldown--;
+  if (player.parryTimer > 0) player.parryTimer--;
+  if (player.shieldBroken > 0) player.shieldBroken--;
+  if (player.stunned > 0) player.stunned--;
+  if (player.slowTimer > 0) player.slowTimer--;
+  if (player.trailTimer > 0) player.trailTimer--;
+
+  if (player.comboTimer > 0) {
+    player.comboTimer--;
+  } else {
+    player.combo = 0;
+  }
+
+  if (!player.shielding && player.shieldBroken <= 0) {
+    player.shield = clamp(player.shield + 0.3, 0, 100);
+  }
+
+  const canAct =
+    player.stunned <= 0 &&
+    roundStarted &&
+    !suddenDeathStarting;
+
+  /* Shield and parry */
+  player.shielding = false;
+
+  if (
+    canAct &&
+    input.shield &&
+    player.attackTimer <= 0 &&
+    player.airAttackTimer <= 0 &&
+    player.specialTimer <= 0 &&
+    player.ultimateTimer <= 0 &&
+    player.shieldBroken <= 0 &&
+    player.shield > 0
+  ) {
+    player.shielding = true;
+    player.vx *= 0.68;
+
+    if (pressed(player.controls.shield)) {
+      player.parryTimer = 6;
+    }
+  }
+
+  /* Horizontal movement */
+  if (
+    canAct &&
+    !player.shielding &&
+    player.specialTimer <= 0 &&
+    player.ultimateTimer <= 0
+  ) {
+    let speed = 0.77;
+
+    if (player.fighter.id === "volt" && isHomeArena(player)) speed = 0.96;
+    if (player.fighter.id === "orbit" && isHomeArena(player)) speed = 0.88;
+    if (player.slowTimer > 0) speed *= 0.56;
+
+    if (input.left) {
+      player.vx -= speed;
+      player.facing = -1;
+    }
+
+    if (input.right) {
+      player.vx += speed;
+      player.facing = 1;
+    }
+  }
+
+  /* Jump */
+  if (
+    canAct &&
+    input.jump &&
+    !player.shielding &&
+    player.ultimateTimer <= 0
+  ) {
+    const orbitDoubleJump =
+      player.fighter.id === "orbit" &&
+      isHomeArena(player) &&
+      player.airJumps < 1;
+
+    if (player.grounded || orbitDoubleJump) {
+      let jumpPower = -12;
+
+      if (player.fighter.id === "zephyr" && isHomeArena(player)) {
+        jumpPower = -14;
+      }
+
+      if (currentStage.lowGravity) jumpPower -= 1.2;
+
+      if (!player.grounded) player.airJumps++;
+
+      player.vy = jumpPower;
+      player.grounded = false;
+
+      addParticles(
+        player.x + player.w / 2,
+        player.y + player.h,
+        player.fighter.element,
+        7,
+        2
+      );
+
+      playSound("jump");
+    }
+  }
+
+  /* Air attack */
+  if (
+    canAct &&
+    input.attack &&
+    !player.grounded &&
+    player.vy > 1 &&
+    player.cooldown <= 0 &&
+    player.specialTimer <= 0 &&
+    player.ultimateTimer <= 0 &&
+    player.airAttackTimer <= 0 &&
+    !player.shielding
+  ) {
+    player.airAttackTimer = 15;
+    player.cooldown = 30;
+    player.hitThisMove = false;
+    player.vy = 5.2;
+
+    playSound("attack");
+  }
+
+  /* Basic attack */
+  if (
+    canAct &&
+    input.attack &&
+    player.grounded &&
+    player.cooldown <= 0 &&
+    player.specialTimer <= 0 &&
+    player.ultimateTimer <= 0 &&
+    !player.shielding
+  ) {
+    player.attackTimer = 11;
+    player.cooldown = 22;
+    player.hitThisMove = false;
+
+    playSound("attack");
+  }
+
+  /* Special */
+  if (
+    canAct &&
+    input.special &&
+    player.specialCooldown <= 0 &&
+    player.attackTimer <= 0 &&
+    player.airAttackTimer <= 0 &&
+    player.ultimateTimer <= 0 &&
+    !player.shielding
+  ) {
+    useSpecial(player);
+  }
+
+  /* Ultimate */
+  if (
+    canAct &&
+    input.ultimate &&
+    player.meter >= 100 &&
+    player.ultimateCooldown <= 0 &&
+    player.attackTimer <= 0 &&
+    player.airAttackTimer <= 0 &&
+    player.specialTimer <= 0
+  ) {
+    startUltimate(player);
+  }
+
+  updateAttackHitboxes(player, opponent);
+  updateSpecialHitboxes(player, opponent);
+  updateUltimateHitbox(player, opponent);
+
+  /* Gravity */
+  let gravity = currentStage.lowGravity ? 0.38 : 0.62;
+
+  if (player.fighter.id === "orbit" && player.ultimateTimer > 0) {
+    gravity = 0.27;
+  }
+
+  player.vy += gravity;
+  player.vy = Math.min(player.vy, 16);
+
+  const oldY = player.y;
+
+  player.x += player.vx;
+  player.y += player.vy;
+
+  /* Friction */
+  if (player.specialTimer <= 0 && player.ultimateTimer <= 0) {
+    let friction = player.grounded ? 0.77 : 0.94;
+
+    if (player.onSlippery) friction = 0.91;
+
+    player.vx *= friction;
+  }
+
+  /* Land on platforms */
+  player.grounded = false;
+  player.onSlippery = false;
+
+  for (const platform of currentStage.platforms) {
+    const wasAbove = oldY + player.h <= platform.y + 9;
+
+    const overlaps =
+      player.x + player.w > platform.x &&
+      player.x < platform.x + platform.w;
+
+    if (
+      player.vy >= 0 &&
+      wasAbove &&
+      player.y + player.h >= platform.y &&
+      overlaps
+    ) {
+      player.y = platform.y - player.h;
+      player.vy = 0;
+      player.grounded = true;
+      player.airJumps = 0;
+      player.onSlippery = !!platform.slippery;
+
+      if (platform.moving) {
+        player.x += platform.moveX || 0;
+        player.y += platform.moveY || 0;
+      }
+    }
+  }
+
+  /* In practice mode, players do not lose lives */
+  if (
+    player.y > HEIGHT + 110 ||
+    player.x < -175 ||
+    player.x > WIDTH + 175
+  ) {
+    if (mode === "practice") {
+      resetPlayer(player);
+      addText(WIDTH / 2, 150, "TRAINING RESET", "#d8d8d8");
+    } else {
+      loseLife(player);
+    }
+  }
+}
+
+/* ---------------------------
+   BASIC + AIR ATTACKS
+---------------------------- */
+function updateAttackHitboxes(player, opponent) {
+  if (player.attackTimer > 0) {
+    player.attackTimer--;
+
+    let reach = 34;
+    let damage = 8;
+    let power = 5.2;
+
+    if (player.fighter.id === "briar") {
+      reach = 55;
+      damage = 9;
+      power = 5.5;
+    }
+
+    if (player.fighter.id === "marina") {
+      reach = 52;
+      damage = 9;
+      power = 5.4;
+    }
+
+    if (player.fighter.id === "inferno") {
+      reach = 46;
+      damage = 10;
+      power = 5.8;
+    }
+
+    if (player.fighter.id === "frost") {
+      damage = 10;
+      power = 5.9;
+    }
+
+    if (player.fighter.id === "magma" || player.fighter.id === "terra") {
+      damage = 11;
+      power = 6.2;
+    }
+
+    const hitbox = {
+      x: player.facing === 1
+        ? player.x + player.w
+        : player.x - reach,
+      y: player.y + 8,
+      w: reach,
+      h: 31
+    };
+
+    if (!player.hitThisMove && rectHit(hitbox, opponent)) {
+      if (
+        hurt(
+          opponent,
+          player,
+          player.facing,
+          damage,
+          power,
+          player.fighter.element,
+          "basic"
+        )
+      ) {
+        player.hitThisMove = true;
+      }
+    }
+  }
+
+  if (player.airAttackTimer > 0) {
+    player.airAttackTimer--;
+
+    let damage = 12;
+    let power = 7.5;
+
+    if (player.fighter.id === "magma") {
+      damage = 15;
+      power = 9;
+    }
+
+    if (player.fighter.id === "thunder") {
+      damage = 13;
+      power = 8;
+    }
+
+    if (player.fighter.id === "orbit") {
+      damage = 13;
+      power = 8.2;
+    }
+
+    if (player.fighter.id === "terra") {
+      damage = 15;
+      power = 9.2;
+    }
+
+    const hitbox = {
+      x: player.x + 3,
+      y: player.y + player.h - 3,
+      w: player.w - 6,
+      h: 28
+    };
+
+    if (!player.hitThisMove && rectHit(hitbox, opponent)) {
+      if (
+        hurt(
+          opponent,
+          player,
+          player.facing,
+          damage,
+          power,
+          player.fighter.element,
+          "air"
+        )
+      ) {
+        player.hitThisMove = true;
+        player.vy = -7;
+
+        addParticles(
+          player.x + player.w / 2,
+          player.y + player.h,
+          "#ffffff",
+          12,
+          4
+        );
+      }
+    }
+  }
+}
+
+/* ---------------------------
+   SPECIAL HITBOXES
+---------------------------- */
+function updateSpecialHitboxes(player, opponent) {
+  if (player.specialTimer <= 0) return;
+
+  player.specialTimer--;
+
+  let hitbox = null;
+  let damage = 13;
+  let power = 7;
+
+  const id = player.fighter.id;
+
+  if (id === "zephyr") {
+    player.vx = player.dashDirection * 6.5;
+
+    hitbox = {
+      x: player.x - 18,
+      y: player.y - 10,
+      w: player.w + 36,
+      h: player.h + 22
+    };
+
+    damage = 13;
+    power = 7.3;
+  }
+
+  if (id === "volt") {
+    player.vx = player.dashDirection * 10.5;
+
+    hitbox = {
+      x: player.x - 5,
+      y: player.y + 4,
+      w: player.w + 10,
+      h: player.h - 8
+    };
+
+    damage = 15;
+    power = 8;
+  }
+
+  if (id === "frost") {
+    player.vx = player.dashDirection * 7.5;
+
+    hitbox = {
+      x: player.x - 5,
+      y: player.y + 18,
+      w: player.w + 10,
+      h: 28
+    };
+
+    damage = 13;
+    power = 7;
+  }
+
+  if (id === "magma") {
+    hitbox = {
+      x: player.facing === 1 ? player.x + player.w : player.x - 35,
+      y: player.y - 22,
+      w: 35,
+      h: 58
+    };
+
+    damage = 15;
+    power = 8.3;
+  }
+
+  if (id === "briar") {
+    hitbox = {
+      x: player.x - 35,
+      y: player.y - 5,
+      w: player.w + 70,
+      h: player.h + 12
+    };
+
+    damage = 13;
+    power = 6.8;
+  }
+
+  if (id === "orbit") {
+    hitbox = {
+      x: player.x - 45,
+      y: player.y - 35,
+      w: player.w + 90,
+      h: player.h + 70
+    };
+
+    damage = 12;
+    power = 6.5;
+  }
+
+  if (id === "terra") {
+    hitbox = {
+      x: player.facing === 1 ? player.x + player.w : player.x - 105,
+      y: player.y + 33,
+      w: 105,
+      h: 38
+    };
+
+    damage = 15;
+    power = 8;
+  }
+
+  if (id === "nova") {
+    hitbox = {
+      x: player.facing === 1 ? player.x + player.w : player.x - 46,
+      y: player.y + 5,
+      w: 46,
+      h: 42
+    };
+
+    damage = 14;
+    power = 7.5;
+  }
+
+  if (!hitbox) return;
+
+  if (!player.hitThisMove && rectHit(hitbox, opponent)) {
+    if (
+      hurt(
+        opponent,
+        player,
+        player.facing,
+        damage,
+        power,
+        player.fighter.element,
+        "special"
+      )
+    ) {
+      player.hitThisMove = true;
+
+      if (id === "frost") {
+        opponent.slowTimer = isHomeArena(player) ? 110 : 68;
+      }
+
+      if (id === "orbit") {
+        opponent.vy -= 4;
+      }
+    }
+  }
+}
+
+/* ---------------------------
+   ULTIMATE HITBOXES
+---------------------------- */
+function updateUltimateHitbox(player, opponent) {
+  if (player.ultimateTimer <= 0) return;
+
+  player.ultimateTimer--;
+
+  const id = player.fighter.id;
+
+  let hitbox = {
+    x: player.x - 70,
+    y: player.y - 60,
+    w: player.w + 140,
+    h: player.h + 120
+  };
+
+  let damage = 22;
+  let power = 10;
+  let direction = player.facing;
+
+  if (id === "zephyr") {
+    hitbox = {
+      x: player.x - 85,
+      y: player.y - 70,
+      w: player.w + 170,
+      h: player.h + 140
+    };
+
+    damage = 20;
+    power = 11;
+    direction = opponent.x < player.x ? -1 : 1;
+  }
+
+  if (id === "volt") {
+    hitbox = {
+      x: player.x - 70,
+      y: player.y - 125,
+      w: player.w + 140,
+      h: player.h + 140
+    };
+
+    damage = 25;
+    power = 12;
+  }
+
+  if (id === "frost") {
+    hitbox = {
+      x: player.x - 105,
+      y: player.y - 70,
+      w: player.w + 210,
+      h: player.h + 135
+    };
+
+    damage = 22;
+    power = 10.8;
+  }
+
+  if (id === "magma") {
+    hitbox = {
+      x: player.x - 90,
+      y: player.y + 18,
+      w: player.w + 180,
+      h: 62
+    };
+
+    damage = 27;
+    power = 13;
+  }
+
+  if (id === "thunder") {
+    hitbox = {
+      x: player.x - 95,
+      y: player.y - 165,
+      w: player.w + 190,
+      h: player.h + 190
+    };
+
+    damage = 25;
+    power = 12.5;
+  }
+
+  if (id === "briar") {
+    hitbox = {
+      x: player.x - 135,
+      y: player.y + 22,
+      w: player.w + 270,
+      h: 65
+    };
+
+    damage = 23;
+    power = 11;
+  }
+
+  if (id === "prism") {
+    hitbox = {
+      x: player.facing === 1 ? player.x : player.x - 345,
+      y: player.y - 18,
+      w: 345,
+      h: 78
+    };
+
+    damage = 24;
+    power = 11.5;
+  }
+
+  if (id === "orbit") {
+    hitbox = {
+      x: player.x - 150,
+      y: player.y - 110,
+      w: player.w + 300,
+      h: player.h + 220
+    };
+
+    damage = 19;
+    power = 9.8;
+  }
+
+  if (id === "marina") {
+    hitbox = {
+      x: player.facing === 1 ? player.x : player.x - 360,
+      y: player.y - 30,
+      w: 360,
+      h: player.h + 95
+    };
+
+    damage = 23;
+    power = 12;
+  }
+
+  if (id === "terra") {
+    hitbox = {
+      x: player.x - 135,
+      y: player.y + 25,
+      w: player.w + 270,
+      h: 72
+    };
+
+    damage = 26;
+    power = 12.5;
+  }
+
+  if (id === "nova") {
+    hitbox = {
+      x: player.x - 160,
+      y: player.y - 115,
+      w: player.w + 320,
+      h: player.h + 230
+    };
+
+    damage = 20;
+    power = 10.5;
+  }
+
+  if (id === "inferno") {
+    hitbox = {
+      x: player.x - 125,
+      y: player.y - 40,
+      w: player.w + 250,
+      h: player.h + 125
+    };
+
+    damage = 26;
+    power = 12.5;
+  }
+
+  if (!player.hitThisMove && rectHit(hitbox, opponent)) {
+    if (
+      hurt(
+        opponent,
+        player,
+        direction,
+        damage,
+        power,
+        player.fighter.element,
+        "ultimate"
+      )
+    ) {
+      player.hitThisMove = true;
+
+      if (id === "frost") opponent.slowTimer = 120;
+      if (id === "orbit") opponent.vy = -14;
+      if (id === "nova") opponent.vx *= 0.5;
+    }
+  }
+}
+
+/* ---------------------------
+   PROJECTILE UPDATES
+---------------------------- */
+function updateProjectiles() {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const shot = projectiles[i];
+    const target = getOpponent(shot.owner);
+
+    shot.x += shot.vx;
+    shot.y += shot.vy;
+    shot.vy += shot.gravity || 0;
+    shot.life--;
+
+    /* Gravity and void shots pull nearby enemies */
+    if (shot.pull > 0) {
+      const dx = shot.x + shot.w / 2 - (target.x + target.w / 2);
+      const dy = shot.y + shot.h / 2 - (target.y + target.h / 2);
+      const distance = Math.hypot(dx, dy);
+
+      if (distance < 155 && distance > 5) {
+        target.vx += (dx / distance) * shot.pull;
+        target.vy += (dy / distance) * shot.pull;
+      }
+    }
+
+    if (rectHit(shot, target)) {
+      const hit = hurt(
+        target,
+        shot.owner,
+        shot.vx >= 0 ? 1 : -1,
+        shot.damage,
+        shot.power,
+        shot.color,
+        "special"
+      );
+
+      if (hit && shot.kind === "ice") {
+        target.slowTimer = isHomeArena(shot.owner) ? 110 : 65;
+      }
+
+      projectiles.splice(i, 1);
+      continue;
+    }
+
+    if (
+      shot.life <= 0 ||
+      shot.x < -100 ||
+      shot.x > WIDTH + 100 ||
+      shot.y > HEIGHT + 100
+    ) {
+      projectiles.splice(i, 1);
+    }
+  }
+}
+
+/* ---------------------------
+   LIFE / KO
+---------------------------- */
+function loseLife(player) {
+  /* Practice mode cannot lose */
+  if (mode === "practice") {
+    resetPlayer(player);
+    return;
+  }
+
+  player.lives--;
+  screenShake = 14;
+  flashTimer = 8;
+  koTimer = 34;
+
+  addParticles(
+    player.x + player.w / 2,
+    player.y + player.h / 2,
+    player.fighter.element,
+    36,
+    7,
+    35
+  );
+
+  playSound("ko");
+
+  if (player.lives <= 0) {
+    gameOver = true;
+    screen = "over";
+
+    const winner = player.number === 1 ? p2 : p1;
+    winnerText = `${winner.fighter.name} WINS!`;
+  } else {
+    resetPlayer(player);
+  }
+}
+  /* =========================================================
+   PART 3 — Hazards, timer, Sudden Death, particles
+   Paste directly after Part 2.
+   ========================================================= */
+
+/* ---------------------------
+   HAZARD CREATION
+   All falling hazards ignore platforms.
+   They only hit a fighter or leave the screen.
+---------------------------- */
+
+function addHazard(type, data = {}) {
+  activeHazards.push({
+    type,
+    x: data.x ?? 0,
+    y: data.y ?? 0,
+    w: data.w ?? 30,
+    h: data.h ?? 30,
+    vx: data.vx ?? 0,
+    vy: data.vy ?? 0,
+    life: data.life ?? 120,
+    warning: data.warning ?? 35,
+    active: false,
+    target: data.target ?? randomPlayer(),
+    color: data.color ?? "#ffffff",
+    power: data.power ?? 6,
+    damage: data.damage ?? 8,
+    direction: data.direction ?? 1,
+    extra: data.extra ?? 0
+  });
+}
+
+function targetPosition(player, width = 30) {
+  return clamp(
+    player.x + player.w / 2 - width / 2 + (Math.random() - 0.5) * 35,
+    15,
+    WIDTH - width - 15
+  );
+}
+
+function chooseHazard() {
+  if (
+    currentStage.practice ||
+    !roundStarted ||
+    suddenDeathStarting ||
+    gameOver
+  ) {
+    return;
+  }
+
+  /* Normal mode is calmer: one strong hazard at a time. */
+  const hazardList = suddenDeath
+    ? [...currentStage.hazards, ...currentStage.suddenHazards]
+    : currentStage.hazards;
+
+  if (!hazardList || hazardList.length === 0) return;
+
+  const strongHazards = activeHazards.filter(h => h.warning > 0 || h.active);
+
+  if (!suddenDeath && strongHazards.length >= 1) return;
+  if (suddenDeath && strongHazards.length >= 3) return;
+
+  const type = hazardList[Math.floor(Math.random() * hazardList.length)];
+  spawnArenaHazard(type);
+}
+
+function spawnArenaHazard(type) {
+  const target = randomPlayer();
+
+  /* CLOUD TEMPLE */
+  if (type === "windZone") {
+    addHazard("windZone", {
+      x: 50 + Math.random() * 700,
+      y: 160 + Math.random() * 250,
+      w: 210,
+      h: 65,
+      warning: 40,
+      life: 105,
+      direction: Math.random() < 0.5 ? -1 : 1,
+      color: "#d9ffff",
+      power: 4
+    });
+  }
+
+  if (type === "templeStone") {
+    const x = targetPosition(target, 34);
+
+    addHazard("fallingObject", {
+      x,
+      y: -45,
+      w: 34,
+      h: 40,
+      vy: 0,
+      warning: 42,
+      life: 160,
+      target,
+      color: "#cdd4d6",
+      damage: 10,
+      power: 7,
+      extra: "stone"
+    });
+  }
+
+  if (type === "cloudZap") {
+    addHazard("strike", {
+      x: targetPosition(target, 42),
+      y: 105,
+      w: 42,
+      h: 350,
+      warning: 44,
+      life: 74,
+      target,
+      color: "#dcffff",
+      damage: 9,
+      power: 6,
+      extra: "cloud"
+    });
+  }
+
+  if (type === "birdSwoop") {
+    addHazard("swoop", {
+      x: -80,
+      y: 120 + Math.random() * 270,
+      w: 70,
+      h: 28,
+      vx: 8,
+      warning: 25,
+      life: 150,
+      color: "#f5ffff",
+      damage: 7,
+      power: 5
+    });
+  }
+
+  if (type === "tornado") {
+    addHazard("tornado", {
+      x: 80 + Math.random() * 780,
+      y: 370,
+      w: 48,
+      h: 74,
+      vx: Math.random() < 0.5 ? -2 : 2,
+      warning: 24,
+      life: 190,
+      color: "#dfffff",
+      damage: 11,
+      power: 8
+    });
+  }
+
+  if (type === "windTunnel") {
+    addHazard("windZone", {
+      x: 0,
+      y: 230 + Math.random() * 150,
+      w: WIDTH,
+      h: 75,
+      warning: 30,
+      life: 120,
+      direction: Math.random() < 0.5 ? -1 : 1,
+      color: "#efffff",
+      power: 6
+    });
+  }
+
+  /* NEON ROOFTOPS */
+  if (type === "electricFloor") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("electricFloor", {
+      x: platform.x,
+      y: platform.y - 18,
+      w: platform.w,
+      h: 25,
+      warning: 42,
+      life: 85,
+      color: "#ff70e8",
+      damage: 10,
+      power: 6.5
+    });
+  }
+
+  if (type === "neonSign") {
+    addHazard("fallingObject", {
+      x: targetPosition(target, 65),
+      y: -60,
+      w: 65,
+      h: 35,
+      warning: 42,
+      life: 160,
+      target,
+      color: "#ff63d7",
+      damage: 12,
+      power: 8,
+      extra: "sign"
+    });
+  }
+
+  if (type === "ventBlast") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("ventBlast", {
+      x: platform.x + Math.random() * Math.max(1, platform.w - 42),
+      y: platform.y - 115,
+      w: 42,
+      h: 115,
+      warning: 35,
+      life: 80,
+      color: "#b7f7ff",
+      damage: 8,
+      power: 7
+    });
+  }
+
+  if (type === "billboardLaser") {
+    addHazard("laser", {
+      x: 0,
+      y: 120 + Math.random() * 290,
+      w: WIDTH,
+      h: 16,
+      warning: 42,
+      life: 70,
+      color: "#ff70e8",
+      damage: 10,
+      power: 7
+    });
+  }
+
+  if (type === "droneDash") {
+    addHazard("swoop", {
+      x: -80,
+      y: 115 + Math.random() * 280,
+      w: 65,
+      h: 26,
+      vx: 10,
+      warning: 20,
+      life: 130,
+      color: "#70edff",
+      damage: 8,
+      power: 6
+    });
+  }
+
+  if (type === "ufoLaser") {
+    addHazard("ufo", {
+      x: 370,
+      y: 85,
+      w: 220,
+      h: 48,
+      warning: 60,
+      life: 185,
+      color: "#b9f6ff",
+      damage: 11,
+      power: 7.5
+    });
+  }
+
+  /* FROZEN PEAKS */
+  if (type === "icicle") {
+    const x = targetPosition(target, 24);
+
+    addHazard("fallingObject", {
+      x,
+      y: -50,
+      w: 24,
+      h: 58,
+      warning: 45,
+      life: 170,
+      target,
+      color: "#eaffff",
+      damage: 11,
+      power: 7.5,
+      extra: "icicle"
+    });
+  }
+
+  if (type === "snowstorm") {
+    addHazard("snowstorm", {
+      x: 0,
+      y: 0,
+      w: WIDTH,
+      h: HEIGHT,
+      warning: 25,
+      life: suddenDeath ? 235 : 150,
+      color: "#eaffff"
+    });
+  }
+
+  if (type === "avalanche") {
+    addHazard("avalanche", {
+      x: -30,
+      y: 350 + Math.random() * 80,
+      w: 180,
+      h: 60,
+      vx: 5,
+      warning: 35,
+      life: 180,
+      color: "#f3ffff",
+      damage: 9,
+      power: 6.5
+    });
+  }
+
+  if (type === "freezingMist") {
+    addHazard("mist", {
+      x: 100 + Math.random() * 600,
+      y: 250 + Math.random() * 150,
+      w: 180,
+      h: 75,
+      warning: 28,
+      life: 140,
+      color: "#d8faff"
+    });
+  }
+
+  if (type === "hail") {
+    for (let i = 0; i < 4; i++) {
+      const hailTarget = randomPlayer();
+
+      addHazard("fallingObject", {
+        x: targetPosition(hailTarget, 20),
+        y: -25 - i * 45,
+        w: 20,
+        h: 20,
+        warning: 25 + i * 4,
+        life: 160,
+        target: hailTarget,
+        color: "#cfffff",
+        damage: 9,
+        power: 6.5,
+        extra: "hail"
+      });
+    }
+  }
+
+  /* MOLTEN CAVERN */
+  if (type === "miniVolcano") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("volcano", {
+      x: platform.x + platform.w / 2 - 22,
+      y: platform.y - 38,
+      w: 44,
+      h: 40,
+      warning: 45,
+      life: 115,
+      color: "#ff8237",
+      damage: 12,
+      power: 8
+    });
+  }
+
+  if (type === "lavaBlob") {
+    const x = targetPosition(target, 24);
+
+    addHazard("fallingObject", {
+      x,
+      y: -30,
+      w: 26,
+      h: 26,
+      warning: 35,
+      life: 150,
+      target,
+      color: "#ff7c2e",
+      damage: 10,
+      power: 7,
+      extra: "lava"
+    });
+  }
+
+  if (type === "fireCrack") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("flamePillar", {
+      x: platform.x + Math.random() * Math.max(1, platform.w - 34),
+      y: platform.y - 95,
+      w: 34,
+      h: 95,
+      warning: 38,
+      life: 76,
+      color: "#ff7e32",
+      damage: 11,
+      power: 7.5
+    });
+  }
+
+  if (type === "hotRock") {
+    const x = targetPosition(target, 34);
+
+    addHazard("fallingObject", {
+      x,
+      y: -45,
+      w: 34,
+      h: 34,
+      warning: 38,
+      life: 160,
+      target,
+      color: "#ff9d3f",
+      damage: 12,
+      power: 8,
+      extra: "hotRock"
+    });
+  }
+
+  if (type === "risingLava") {
+    addHazard("risingLava", {
+      x: 0,
+      y: HEIGHT,
+      w: WIDTH,
+      h: 0,
+      warning: 40,
+      life: 420,
+      color: "#ff5d29",
+      damage: 11,
+      power: 8
+    });
+  }
+
+  if (type === "emberRain") {
+    for (let i = 0; i < 5; i++) {
+      const emberTarget = randomPlayer();
+
+      addHazard("fallingObject", {
+        x: targetPosition(emberTarget, 14),
+        y: -20 - i * 36,
+        w: 14,
+        h: 18,
+        warning: 24 + i * 4,
+        life: 145,
+        target: emberTarget,
+        color: "#ffbb42",
+        damage: 7,
+        power: 5.5,
+        extra: "ember"
+      });
+    }
+  }
+
+  /* STORM TOWER */
+  if (type === "lightning" || type === "lightningStorm") {
+    addHazard("strike", {
+      x: targetPosition(target, 40),
+      y: 65,
+      w: 40,
+      h: 390,
+      warning: type === "lightningStorm" ? 28 : 44,
+      life: 70,
+      target,
+      color: "#fff48a",
+      damage: 12,
+      power: 8,
+      extra: "lightning"
+    });
+  }
+
+  if (type === "rainGust") {
+    addHazard("windZone", {
+      x: 0,
+      y: 160 + Math.random() * 180,
+      w: WIDTH,
+      h: 90,
+      warning: 28,
+      life: 105,
+      direction: Math.random() < 0.5 ? -1 : 1,
+      color: "#a7d8ff",
+      power: 4.5
+    });
+  }
+
+  if (type === "towerBrick") {
+    const x = targetPosition(target, 30);
+
+    addHazard("fallingObject", {
+      x,
+      y: -35,
+      w: 30,
+      h: 28,
+      warning: 37,
+      life: 150,
+      target,
+      color: "#72809c",
+      damage: 10,
+      power: 7,
+      extra: "brick"
+    });
+  }
+
+  if (type === "thunderClap") {
+    addHazard("thunderClap", {
+      x: 150 + Math.random() * 600,
+      y: 120 + Math.random() * 150,
+      w: 100,
+      h: 100,
+      warning: 40,
+      life: 72,
+      color: "#c2eaff",
+      damage: 9,
+      power: 7
+    });
+  }
+
+  if (type === "lightningBall") {
+    addHazard("lightningBall", {
+      x: Math.random() < 0.5 ? -25 : WIDTH + 25,
+      y: 150 + Math.random() * 220,
+      w: 28,
+      h: 28,
+      vx: Math.random() < 0.5 ? 3.5 : -3.5,
+      warning: 20,
+      life: 260,
+      color: "#fff16b",
+      damage: 9,
+      power: 6.5
+    });
+  }
+
+  /* JUNGLE RUINS */
+  if (type === "thornPatch") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("thornPatch", {
+      x: platform.x + Math.random() * Math.max(1, platform.w - 100),
+      y: platform.y - 20,
+      w: 100,
+      h: 20,
+      warning: 35,
+      life: 155,
+      color: "#87db5d",
+      damage: 5,
+      power: 3.5
+    });
+  }
+
+  if (type === "monkeyBanana") {
+    addHazard("banana", {
+      x: Math.random() < 0.5 ? 20 : WIDTH - 45,
+      y: 120,
+      w: 22,
+      h: 18,
+      vx: target.x < WIDTH / 2 ? 6 : -6,
+      vy: -2,
+      warning: 32,
+      life: 150,
+      target,
+      color: "#ffe75a",
+      damage: 9,
+      power: 6
+    });
+  }
+
+  if (type === "coconut") {
+    const x = targetPosition(target, 26);
+
+    addHazard("fallingObject", {
+      x,
+      y: -30,
+      w: 26,
+      h: 26,
+      warning: 38,
+      life: 150,
+      target,
+      color: "#8d5935",
+      damage: 11,
+      power: 7,
+      extra: "coconut"
+    });
+  }
+
+  if (type === "vineGrab") {
+    addHazard("swoop", {
+      x: -70,
+      y: 180 + Math.random() * 220,
+      w: 80,
+      h: 25,
+      vx: 7,
+      warning: 28,
+      life: 165,
+      color: "#75c856",
+      damage: 8,
+      power: 6
+    });
+  }
+
+  if (type === "parrotPoop") {
+    const x = targetPosition(target, 18);
+
+    addHazard("fallingObject", {
+      x,
+      y: -25,
+      w: 18,
+      h: 24,
+      warning: 28,
+      life: 150,
+      target,
+      color: "#e7f4bf",
+      damage: 8,
+      power: 5.8,
+      extra: "poop"
+    });
+  }
+
+  /* CRYSTAL MINES */
+  if (type === "crystalBeam") {
+    addHazard("laser", {
+      x: 0,
+      y: 115 + Math.random() * 310,
+      w: WIDTH,
+      h: 16,
+      warning: 43,
+      life: 74,
+      color: "#86f7ff",
+      damage: 11,
+      power: 7.5
+    });
+  }
+
+  if (type === "jetpackMiner") {
+    addHazard("miner", {
+      x: Math.random() < 0.5 ? -50 : WIDTH + 50,
+      y: 105 + Math.random() * 180,
+      w: 42,
+      h: 32,
+      vx: Math.random() < 0.5 ? 3.5 : -3.5,
+      warning: 30,
+      life: 210,
+      color: "#ff9deb",
+      damage: 9,
+      power: 6
+    });
+  }
+
+  if (type === "crystalSpike") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("crystalSpike", {
+      x: platform.x + Math.random() * Math.max(1, platform.w - 45),
+      y: platform.y - 60,
+      w: 45,
+      h: 60,
+      warning: 39,
+      life: 85,
+      color: "#80f8ff",
+      damage: 11,
+      power: 7.5
+    });
+  }
+
+  if (type === "crystalFall" || type === "gemShower") {
+    const count = type === "gemShower" ? 5 : 1;
+
+    for (let i = 0; i < count; i++) {
+      const gemTarget = randomPlayer();
+
+      addHazard("fallingObject", {
+        x: targetPosition(gemTarget, 20),
+        y: -25 - i * 42,
+        w: 20,
+        h: 26,
+        warning: 28 + i * 3,
+        life: 150,
+        target: gemTarget,
+        color: i % 2 ? "#ff91e9" : "#82f8ff",
+        damage: 9,
+        power: 6.5,
+        extra: "gem"
+      });
+    }
+  }
+
+  if (type === "mineCartRush") {
+    addHazard("mineCart", {
+      x: -80,
+      y: 420,
+      w: 85,
+      h: 30,
+      vx: 7,
+      warning: 32,
+      life: 180,
+      color: "#988669",
+      damage: 12,
+      power: 8
+    });
+  }
+
+  /* MOON BASE */
+  if (type === "meteor") {
+    const x = targetPosition(target, 32);
+
+    addHazard("fallingObject", {
+      x,
+      y: -55,
+      w: 32,
+      h: 35,
+      warning: 44,
+      life: 170,
+      target,
+      color: "#ff9d5d",
+      damage: 12,
+      power: 8,
+      extra: "meteor"
+    });
+  }
+
+  if (type === "satelliteLaser") {
+    addHazard("laser", {
+      x: 0,
+      y: 110 + Math.random() * 310,
+      w: WIDTH,
+      h: 15,
+      warning: 42,
+      life: 72,
+      color: "#b6eaff",
+      damage: 10,
+      power: 7
+    });
+  }
+
+  if (type === "spaceJunk") {
+    addHazard("swoop", {
+      x: Math.random() < 0.5 ? -75 : WIDTH + 75,
+      y: 115 + Math.random() * 270,
+      w: 65,
+      h: 28,
+      vx: Math.random() < 0.5 ? 7 : -7,
+      warning: 25,
+      life: 180,
+      color: "#c7d7ee",
+      damage: 9,
+      power: 6.5
+    });
+  }
+
+  if (type === "airlockBlast") {
+    addHazard("windZone", {
+      x: Math.random() < 0.5 ? 0 : WIDTH - 240,
+      y: 250,
+      w: 240,
+      h: 120,
+      warning: 34,
+      life: 95,
+      direction: Math.random() < 0.5 ? 1 : -1,
+      color: "#d8eeff",
+      power: 5
+    });
+  }
+
+  if (type === "alienAttack") {
+    addHazard("alien", {
+      x: Math.random() < 0.5 ? 100 : WIDTH - 150,
+      y: 410,
+      w: 45,
+      h: 40,
+      warning: 60,
+      life: 225,
+      color: "#a6ff9d",
+      damage: 10,
+      power: 7
+    });
+  }
+
+  /* WATER DOME */
+  if (type === "whirlpool") {
+    addHazard("whirlpool", {
+      x: 100 + Math.random() * 700,
+      y: 175 + Math.random() * 210,
+      w: 95,
+      h: 95,
+      warning: 38,
+      life: 150,
+      color: "#7cf8ff",
+      damage: 9,
+      power: 6
+    });
+  }
+
+  if (type === "jellyfish") {
+    addHazard("jellyfish", {
+      x: Math.random() < 0.5 ? -35 : WIDTH + 35,
+      y: 130 + Math.random() * 240,
+      w: 32,
+      h: 45,
+      vx: Math.random() < 0.5 ? 2.5 : -2.5,
+      warning: 25,
+      life: 300,
+      color: "#ff9dea",
+      damage: 7,
+      power: 5
+    });
+  }
+
+  if (type === "domeJet") {
+    addHazard("domeJet", {
+      x: Math.random() < 0.5 ? 0 : WIDTH - 80,
+      y: 110 + Math.random() * 280,
+      w: 100,
+      h: 55,
+      warning: 40,
+      life: 90,
+      direction: Math.random() < 0.5 ? 1 : -1,
+      color: "#8effff",
+      damage: 9,
+      power: 8
+    });
+  }
+
+  if (type === "anchorFall") {
+    const x = targetPosition(target, 42);
+
+    addHazard("fallingObject", {
+      x,
+      y: -65,
+      w: 42,
+      h: 56,
+      warning: 48,
+      life: 190,
+      target,
+      color: "#788c9a",
+      damage: 14,
+      power: 9,
+      extra: "anchor"
+    });
+  }
+
+  if (type === "risingWater") {
+    addHazard("risingWater", {
+      x: 0,
+      y: HEIGHT,
+      w: WIDTH,
+      h: 0,
+      warning: 38,
+      life: 410,
+      color: "#4acbe5",
+      damage: 8,
+      power: 6
+    });
+  }
+
+  if (type === "sharkCrash") {
+    addHazard("shark", {
+      x: -180,
+      y: 190 + Math.random() * 130,
+      w: 180,
+      h: 75,
+      vx: 7,
+      warning: 55,
+      life: 200,
+      color: "#7ea5b5",
+      damage: 13,
+      power: 8.5
+    });
+  }
+
+  /* ROCK CAVE TEMPLE */
+  if (type === "fallingBoulder") {
+    const x = targetPosition(target, 48);
+
+    addHazard("fallingObject", {
+      x,
+      y: -60,
+      w: 48,
+      h: 48,
+      warning: 44,
+      life: 180,
+      target,
+      color: "#83745f",
+      damage: 14,
+      power: 9,
+      extra: "boulder"
+    });
+  }
+
+  if (type === "rollingBoulder") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("rollingBoulder", {
+      x: platform.x,
+      y: platform.y - 36,
+      w: 36,
+      h: 36,
+      vx: Math.random() < 0.5 ? 4.5 : -4.5,
+      warning: 35,
+      life: 240,
+      color: "#847560",
+      damage: 12,
+      power: 8
+    });
+  }
+
+  if (type === "stoneSpear") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("stoneSpear", {
+      x: platform.x + Math.random() * Math.max(1, platform.w - 40),
+      y: platform.y - 70,
+      w: 40,
+      h: 70,
+      warning: 40,
+      life: 85,
+      color: "#c6ae82",
+      damage: 12,
+      power: 8
+    });
+  }
+
+  if (type === "templeBeam" || type === "giantFaceBeam") {
+    addHazard("templeBeam", {
+      x: 0,
+      y: 120 + Math.random() * 280,
+      w: WIDTH,
+      h: type === "giantFaceBeam" ? 34 : 18,
+      warning: type === "giantFaceBeam" ? 65 : 45,
+      life: 85,
+      color: "#f4ca73",
+      damage: type === "giantFaceBeam" ? 17 : 12,
+      power: type === "giantFaceBeam" ? 11 : 8
+    });
+  }
+
+  if (type === "collapse") {
+    for (let i = 0; i < 4; i++) {
+      const rockTarget = randomPlayer();
+
+      addHazard("fallingObject", {
+        x: targetPosition(rockTarget, 38),
+        y: -45 - i * 45,
+        w: 38,
+        h: 38,
+        warning: 24 + i * 4,
+        life: 170,
+        target: rockTarget,
+        color: "#8a7c68",
+        damage: 11,
+        power: 7.5,
+        extra: "boulder"
+      });
+    }
+  }
+
+  /* BLACK HOLE ARENA */
+  if (type === "gravityZone" || type === "gravityStorm") {
+    addHazard("gravityZone", {
+      x: 80 + Math.random() * 760,
+      y: 110 + Math.random() * 270,
+      w: 110,
+      h: 110,
+      warning: type === "gravityStorm" ? 25 : 40,
+      life: 165,
+      color: "#c78cff",
+      damage: 8,
+      power: 6
+    });
+  }
+
+  if (type === "targetAsteroid") {
+    const x = targetPosition(target, 38);
+
+    addHazard("fallingObject", {
+      x,
+      y: -50,
+      w: 38,
+      h: 38,
+      warning: 45,
+      life: 175,
+      target,
+      color: "#7b718d",
+      damage: 13,
+      power: 8.5,
+      extra: "asteroid"
+    });
+  }
+
+  if (type === "warpRift") {
+    addHazard("warpRift", {
+      x: 110 + Math.random() * 720,
+      y: 130 + Math.random() * 260,
+      w: 46,
+      h: 60,
+      warning: 0,
+      life: 90,
+      color: "#bd85ff"
+    });
+  }
+
+  if (type === "spaceDebris") {
+    addHazard("swoop", {
+      x: Math.random() < 0.5 ? -90 : WIDTH + 90,
+      y: 100 + Math.random() * 300,
+      w: 78,
+      h: 30,
+      vx: Math.random() < 0.5 ? 8 : -8,
+      warning: 20,
+      life: 170,
+      color: "#b0a3c8",
+      damage: 10,
+      power: 7
+    });
+  }
+
+  if (type === "asteroidRain") {
+    for (let i = 0; i < 5; i++) {
+      const asteroidTarget = randomPlayer();
+
+      addHazard("fallingObject", {
+        x: targetPosition(asteroidTarget, 28),
+        y: -25 - i * 43,
+        w: 28,
+        h: 28,
+        warning: 22 + i * 4,
+        life: 150,
+        target: asteroidTarget,
+        color: "#83788f",
+        damage: 10,
+        power: 7,
+        extra: "asteroid"
+      });
+    }
+  }
+
+  /* HELL ARENA */
+  if (type === "flamePillar") {
+    const platform = currentStage.platforms[
+      Math.floor(Math.random() * currentStage.platforms.length)
+    ];
+
+    addHazard("flamePillar", {
+      x: platform.x + Math.random() * Math.max(1, platform.w - 38),
+      y: platform.y - 105,
+      w: 38,
+      h: 105,
+      warning: 38,
+      life: 78,
+      color: "#ff7835",
+      damage: 12,
+      power: 8
+    });
+  }
+
+  if (type === "flamingChain") {
+    addHazard("chainSweep", {
+      x: -120,
+      y: 150 + Math.random() * 220,
+      w: 160,
+      h: 30,
+      vx: 8,
+      warning: 45,
+      life: 175,
+      color: "#ff8737",
+      damage: 13,
+      power: 8.5
+    });
+  }
+
+  if (type === "fallingObject") {
+    const x = targetPosition(target, 26);
+
+    addHazard("fallingObject", {
+      x,
+      y: -35,
+      w: 26,
+      h: 26,
+      warning: 37,
+      life: 150,
+      target,
+      color: "#ff6e2f",
+      damage: 12,
+      power: 8,
+      extra: "fireball"
+    });
+  }
+
+  if (type === "fireHands") {
+    addHazard("fireHands", {
+      x: 170 + Math.random() * 570,
+      y: 395,
+      w: 70,
+      h: 60,
+      warning: 40,
+      life: 90,
+      color: "#ff7737",
+      damage: 11,
+      power: 7.5
+    });
+  }
+
+  if (type === "devilAwakens") {
+    addHazard("devil", {
+      x: 390,
+      y: 85,
+      w: 180,
+      h: 120,
+      warning: 65,
+      life: 225,
+      color: "#ff4e39",
+      damage: 12,
+      power: 8
+    });
+  }
+}
+
+/* ---------------------------
+   HAZARD UPDATES
+---------------------------- */
+function damageHazardPlayer(player, hazard, direction = 1) {
+  if (player.invincible > 0) return;
+
+  hurt(
+    player,
+    getOpponent(player),
+    direction,
+    hazard.damage,
+    hazardPowerFor(player, hazard.power),
+    hazard.color,
+    "hazard"
+  );
+}
+
+function updateHazards() {
+  if (currentStage.practice || !roundStarted || suddenDeathStarting) return;
+
+  /* Choose new hazards at changing intervals */
+  const interval = suddenDeath ? 70 : 155;
+
+  if (frame % interval === 0) {
+    chooseHazard();
+  }
+
+  for (let i = activeHazards.length - 1; i >= 0; i--) {
+    const hazard = activeHazards[i];
+
+    hazard.life--;
+    if (hazard.warning > 0) {
+      hazard.warning--;
+    } else {
+      hazard.active = true;
+    }
+
+    /* Falling objects target a position, then fall through all platforms */
+    if (hazard.type === "fallingObject") {
+      if (hazard.warning <= 0) {
+        hazard.vy += 0.42;
+        hazard.y += hazard.vy;
+      }
+    }
+
+    if (
+      hazard.type === "swoop" ||
+      hazard.type === "lightningBall" ||
+      hazard.type === "banana" ||
+      hazard.type === "mineCart" ||
+      hazard.type === "chainSweep" ||
+      hazard.type === "shark"
+    ) {
+      if (hazard.warning <= 0) {
+        hazard.x += hazard.vx;
+      }
+    }
+
+    if (hazard.type === "rollingBoulder") {
+      if (hazard.warning <= 0) {
+        hazard.x += hazard.vx;
+        hazard.vy += 0.25;
+        hazard.y += hazard.vy;
+
+        /* It can roll and drop through lower areas */
+        for (const platform of currentStage.platforms) {
+          const overlapping =
+            hazard.x + hazard.w > platform.x &&
+            hazard.x < platform.x + platform.w;
+
+          const wasAbove = hazard.y + hazard.h - hazard.vy <= platform.y + 4;
+
+          if (
+            hazard.vy >= 0 &&
+            wasAbove &&
+            hazard.y + hazard.h >= platform.y &&
+            overlapping
+          ) {
+            hazard.y = platform.y - hazard.h;
+            hazard.vy = 0;
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "whirlpool") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          const centerX = hazard.x + hazard.w / 2;
+          const centerY = hazard.y + hazard.h / 2;
+          const dx = centerX - (player.x + player.w / 2);
+          const dy = centerY - (player.y + player.h / 2);
+          const distance = Math.hypot(dx, dy);
+
+          if (distance < 135 && distance > 5) {
+            player.vx += (dx / distance) * 0.25;
+            player.vy += (dy / distance) * 0.13;
+          }
+
+          if (rectHit(player, hazard)) {
+            damageHazardPlayer(player, hazard, dx > 0 ? 1 : -1);
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "gravityZone") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          const centerX = hazard.x + hazard.w / 2;
+          const centerY = hazard.y + hazard.h / 2;
+          const dx = centerX - (player.x + player.w / 2);
+          const dy = centerY - (player.y + player.h / 2);
+          const distance = Math.hypot(dx, dy);
+
+          if (distance < 180 && distance > 5) {
+            player.vx += (dx / distance) * 0.28;
+            player.vy += (dy / distance) * 0.17;
+          }
+
+          if (rectHit(player, hazard)) {
+            damageHazardPlayer(player, hazard, dx > 0 ? 1 : -1);
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "windZone" || hazard.type === "domeJet") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          if (rectHit(player, hazard)) {
+            /* Wind becomes much scarier at high damage */
+            const windStrength =
+              0.16 +
+              player.damage / 150 * 0.45;
+
+            player.vx += hazard.direction * windStrength;
+
+            if (frame % 18 === 0) {
+              damageHazardPlayer(player, {
+                ...hazard,
+                damage: 3,
+                power: hazard.power * 0.45
+              }, hazard.direction);
+            }
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "snowstorm") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          player.slowTimer = Math.max(player.slowTimer, 25);
+        }
+      }
+    }
+
+    if (hazard.type === "mist") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          if (rectHit(player, hazard)) {
+            player.slowTimer = Math.max(player.slowTimer, 40);
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "electricFloor" ||
+        hazard.type === "ventBlast" ||
+        hazard.type === "laser" ||
+        hazard.type === "flamePillar" ||
+        hazard.type === "stoneSpear" ||
+        hazard.type === "crystalSpike" ||
+        hazard.type === "fireHands" ||
+        hazard.type === "strike" ||
+        hazard.type === "templeBeam") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          if (rectHit(player, hazard)) {
+            damageHazardPlayer(
+              player,
+              hazard,
+              player.x < hazard.x + hazard.w / 2 ? -1 : 1
+            );
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "volcano") {
+      if (hazard.warning === 0 && hazard.life % 24 === 0) {
+        const lavaTarget = randomPlayer();
+
+        addHazard("fallingObject", {
+          x: targetPosition(lavaTarget, 20),
+          y: hazard.y - 40,
+          w: 20,
+          h: 20,
+          warning: 0,
+          life: 100,
+          target: lavaTarget,
+          color: "#ff7d2e",
+          damage: 9,
+          power: 6.5,
+          extra: "lava"
+        });
+      }
+    }
+
+    if (hazard.type === "thunderClap") {
+      if (hazard.warning <= 0) {
+        for (const player of [p1, p2]) {
+          const dx = player.x + player.w / 2 - (hazard.x + hazard.w / 2);
+          const dy = player.y + player.h / 2 - (hazard.y + hazard.h / 2);
+          const distance = Math.hypot(dx, dy);
+
+          if (distance < 145) {
+            player.vx += (dx / Math.max(distance, 1)) * 1.5;
+
+            if (frame % 16 === 0) {
+              damageHazardPlayer(player, hazard, dx < 0 ? -1 : 1);
+            }
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "jellyfish") {
+      if (hazard.warning <= 0) {
+        hazard.x += hazard.vx;
+        hazard.y += Math.sin(frame * 0.08) * 0.8;
+
+        for (const player of [p1, p2]) {
+          if (rectHit(player, hazard)) {
+            damageHazardPlayer(player, hazard, hazard.vx > 0 ? 1 : -1);
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "warpRift") {
+      for (const player of [p1, p2]) {
+        if (rectHit(player, hazard)) {
+          const safePlatform = currentStage.platforms[
+            Math.floor(Math.random() * currentStage.platforms.length)
+          ];
+
+          player.x = safePlatform.x + safePlatform.w / 2 - player.w / 2;
+          player.y = safePlatform.y - player.h - 5;
+          player.vx = 0;
+          player.vy = 0;
+          player.invincible = 25;
+
+          addParticles(
+            player.x + player.w / 2,
+            player.y + player.h / 2,
+            "#ca8cff",
+            20,
+            5
+          );
+
+          hazard.life = 0;
+        }
+      }
+    }
+
+    if (hazard.type === "tornado") {
+      if (hazard.warning <= 0) {
+        hazard.x += hazard.vx;
+
+        if (hazard.x < 0 || hazard.x + hazard.w > WIDTH) {
+          hazard.vx *= -1;
+        }
+
+        for (const player of [p1, p2]) {
+          const dx = hazard.x + hazard.w / 2 - (player.x + player.w / 2);
+
+          if (rectHit(player, hazard)) {
+            player.vx += Math.sign(dx) * 0.45;
+            player.vy -= 0.35;
+
+            if (frame % 18 === 0) {
+              damageHazardPlayer(player, hazard, dx > 0 ? 1 : -1);
+            }
+          }
+        }
+      }
+    }
+
+    if (hazard.type === "miner") {
+      if (hazard.warning <= 0) {
+        hazard.x += hazard.vx;
+
+        if (hazard.life % 45 === 0) {
+          const gemTarget = randomPlayer();
+
+          addHazard("fallingObject", {
+            x: targetPosition(gemTarget, 18),
+            y: hazard.y,
+            w: 18,
+            h: 22,
+            warning: 0,
+            life: 100,
+            target: gemTarget,
+            color: "#ff9dea",
+            damage: 8,
+            power: 5.5,
+            extra: "gem"
+          });
+        }
+      }
+    }
+
+    if (hazard.type === "ufo") {
+      if (hazard.warning <= 0) {
+        /* The UFO is a temporary platform */
+        if (hazard.life % 20 < 8) {
+          const laserTarget = randomPlayer();
+
+          addHazard("strike", {
+            x: targetPosition(laserTarget, 28),
+            y: hazard.y + 45,
+            w: 28,
+            h: 350,
+            warning: 12,
+            life: 38,
+            target: laserTarget,
+            color: "#b9f6ff",
+            damage: 9,
+            power: 6.5,
+            extra: "ufoLaser"
+          });
+        }
+      }
+    }
+
+    if (hazard.type === "alien") {
+      if (hazard.warning <= 0 && hazard.life % 40 === 0) {
+        const alienTarget = randomPlayer();
+
+        addHazard("laser", {
+          x: hazard.x < WIDTH / 2 ? hazard.x : 0,
+          y: alienTarget.y + 24,
+          w: hazard.x < WIDTH / 2 ? WIDTH - hazard.x : hazard.x,
+          h: 10,
+          warning: 13,
+          life: 35,
+          color: "#a6ff9d",
+          damage: 9,
+          power: 6.5
+        });
+      }
+    }
+
+    if (hazard.type === "devil") {
+      if (hazard.warning <= 0 && hazard.life % 42 === 0) {
+        const devilTarget = randomPlayer();
+
+        addHazard("fallingObject", {
+          x: targetPosition(devilTarget, 28),
+          y: -25,
+          w: 28,
+          h: 28,
+          warning: 20,
+          life: 130,
+          target: devilTarget,
+          color: "#ff6532",
+          damage: 11,
+          power: 7.5
+        });
+      }
+    }
+
+    if (hazard.type === "risingLava" || hazard.type === "risingWater") {
+      if (hazard.warning <= 0) {
+        hazard.y -= 0.32;
+        hazard.h = HEIGHT - hazard.y;
+
+        for (const player of [p1, p2]) {
+          if (rectHit(player, hazard)) {
+            damageHazardPlayer(
+              player,
+              hazard,
+              player.x < WIDTH / 2 ? -1 : 1
+            );
+
+            player.vy = -9;
+          }
+        }
+      }
+    }
+
+    /* Hit checks for moving/falling physical hazards */
+    const movingHazards = [
+      "fallingObject",
+      "swoop",
+      "lightningBall",
+      "banana",
+      "mineCart",
+      "chainSweep",
+      "shark",
+      "rollingBoulder"
+    ];
+
+    if (hazard.warning <= 0 && movingHazards.includes(hazard.type)) {
+      for (const player of [p1, p2]) {
+        if (rectHit(player, hazard)) {
+          damageHazardPlayer(
+            player,
+            hazard,
+            hazard.vx >= 0 ? 1 : -1
+          );
+        }
+      }
+    }
+
+    /* Remove hazards */
+    if (
+      hazard.life <= 0 ||
+      hazard.x < -250 ||
+      hazard.x > WIDTH + 250 ||
+      hazard.y > HEIGHT + 160
+    ) {
+      activeHazards.splice(i, 1);
+    }
+  }
+}
+
+/* ---------------------------
+   MATCH TIMER
+---------------------------- */
+function updateMatchTimer() {
+  if (
+    mode === "practice" ||
+    !roundStarted ||
+    suddenDeath ||
+    suddenDeathStarting ||
+    gameOver
+  ) {
+    return;
+  }
+
+  matchTime--;
+
+  if (matchTime <= 0) {
+    startSuddenDeath();
+  }
+}
+
+function checkFinalStockSuddenDeath() {
+  if (
+    mode === "practice" ||
+    suddenDeath ||
+    suddenDeathStarting ||
+    gameOver ||
+    !p1 ||
+    !p2
+  ) {
+    return;
+  }
+
+  if (p1.lives === 1 && p2.lives === 1) {
+    startSuddenDeath();
+  }
+}
+
+/* ---------------------------
+   SUDDEN DEATH
+---------------------------- */
+function startSuddenDeath() {
+  if (suddenDeath || suddenDeathStarting || mode === "practice") return;
+
+  suddenDeathStarting = true;
+  roundStarted = false;
+  suddenTimer = 300; /* 5 seconds */
+
+  activeHazards = [];
+  projectiles = [];
+
+  p1.lives = 1;
+  p2.lives = 1;
+
+  resetPlayer(p1);
+  resetPlayer(p2);
+
+  p1.x = 305;
+  p2.x = 615;
+  p1.y = 350;
+  p2.y = 350;
+
+  cameraZoom = 0.93;
+  flashTimer = 10;
+  screenShake = 7;
+
+  addText(
+    WIDTH / 2,
+    HEIGHT / 2 - 65,
+    "SUDDEN DEATH!",
+    "#ffef67"
+  );
+
+  playSound("ultimate");
+}
+
+function updateSuddenDeath() {
+  if (!suddenDeathStarting) return;
+
+  suddenTimer--;
+
+  if (suddenTimer === 0) {
+    suddenDeathStarting = false;
+    suddenDeath = true;
+    roundStarted = true;
+    cameraZoom = 1;
+
+    addText(
+      WIDTH / 2,
+      HEIGHT / 2,
+      "CLASH!",
+      "#ffffff"
+    );
+
+    playSound("special");
+  }
+}
+
+/* ---------------------------
+   PARTICLES AND TEXT
+---------------------------- */
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const particle = particles[i];
+
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vy += particle.gravity || 0.08;
+    particle.life--;
+
+    if (particle.life <= 0) {
+      particles.splice(i, 1);
+    }
+  }
+
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const text = floatingTexts[i];
+
+    text.y += text.vy;
+    text.life--;
+
+    if (text.life <= 0) {
+      floatingTexts.splice(i, 1);
+    }
+  }
+
+  if (flashTimer > 0) flashTimer--;
+
+  if (comboCinematic > 0) {
+    comboCinematic--;
+    cameraZoom = 1.08;
+
+    if (comboCinematic <= 0) {
+      cameraZoom = 1;
+      cinematicAttacker = null;
+      cinematicTarget = null;
+    }
+  }
+
+  if (koTimer > 0) {
+    koTimer--;
+    cameraZoom = 1.1;
+
+    if (koTimer <= 0) {
+      cameraZoom = 1;
+    }
+  }
+}
+
+/* ---------------------------
+   ROUND COUNTDOWN
+---------------------------- */
+function updateCountdown() {
+  if (roundStarted || suddenDeathStarting) return;
+
+  countdown--;
+
+  if (countdown <= 0) {
+    roundStarted = true;
+
+    addText(
+      WIDTH / 2,
+      HEIGHT / 2,
+      "CLASH!",
+      "#fff36a"
+    );
+
+    playSound("special");
+  }
+}
+/* =========================================================
+   PART 4 — Graphics, menus, HUD, drawing, main loop
+   Paste directly after Part 3.
+   ========================================================= */
+
+/* ---------------------------
+   DRAWING HELPERS
+---------------------------- */
+function glow(color, blur = 12) {
+  ctx.shadowColor = color;
+  ctx.shadowBlur = blur;
+}
+
+function noGlow() {
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+}
+
+function drawStars(amount, maxY = HEIGHT) {
+  for (let i = 0; i < amount; i++) {
+    const x = (i * 79 + 17) % WIDTH;
+    const y = (i * 43 + 11) % maxY;
+    const size = Math.sin(frame * 0.05 + i) > 0.55 ? 3 : 2;
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x, y, size, size);
+  }
+}
+
+function drawCloud(x, y, size, alpha = 0.7) {
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  ctx.fillRect(x, y, size * 2, size * 0.55);
+  ctx.fillRect(x + size * 0.28, y - size * 0.35, size, size * 0.82);
+  ctx.fillRect(x + size, y - size * 0.2, size * 0.8, size * 0.7);
+}
+
+function drawMountain(x, y, w, h, color, snow = null) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x + w / 2, y);
+  ctx.lineTo(x + w, y + h);
+  ctx.fill();
+
+  if (snow) {
+    ctx.fillStyle = snow;
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2, y);
+    ctx.lineTo(x + w * 0.38, y + h * 0.27);
+    ctx.lineTo(x + w * 0.5, y + h * 0.18);
+    ctx.lineTo(x + w * 0.62, y + h * 0.27);
+    ctx.fill();
+  }
+}
+
+/* ---------------------------
+   BACKGROUNDS
+---------------------------- */
+function drawPracticeBackground() {
+  ctx.fillStyle = "#272b30";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.strokeStyle = "#555d66";
+  ctx.lineWidth = 1;
+
+  for (let x = 0; x < WIDTH; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, HEIGHT);
+    ctx.stroke();
+  }
+
+  for (let y = 0; y < HEIGHT; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(WIDTH, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#c7cdd1";
+  ctx.font = "bold 22px Arial";
+  ctx.textAlign = "center";
+  ctx.fillText("TRAINING ROOM", WIDTH / 2, 42);
+  ctx.textAlign = "left";
+}
+
+function drawSkyBackground() {
+  const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  sky.addColorStop(0, "#3196dd");
+  sky.addColorStop(0.6, "#85e3f5");
+  sky.addColorStop(1, "#e7fcff");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  glow("#fff5a8", 20);
+  ctx.fillStyle = "#fff6a8";
+  ctx.fillRect(822, 40, 58, 65);
+  noGlow();
+
+  drawCloud(55 + Math.sin(frame * 0.01) * 22, 110, 35, 0.62);
+  drawCloud(350 + Math.sin(frame * 0.008) * 25, 67, 28, 0.72);
+  drawCloud(710 + Math.sin(frame * 0.01) * 20, 145, 37, 0.64);
+
+  ctx.fillStyle = "#587889";
+  ctx.fillRect(25, 405, 145, 20);
+  ctx.fillRect(785, 400, 140, 20);
+
+  ctx.fillStyle = "#7dbb70";
+  ctx.fillRect(25, 397, 145, 9);
+  ctx.fillRect(785, 392, 140, 9);
+}
+
+function drawNeonBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#10113b");
+  bg.addColorStop(0.62, "#3f1e69");
+  bg.addColorStop(1, "#a12d76");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  drawStars(55, 250);
+
+  ctx.strokeStyle = "rgba(140,225,255,0.32)";
+  for (let i = 0; i < 55; i++) {
+    const x = (i * 67 + frame * 2) % WIDTH;
+    const y = (i * 39 + frame * 4) % HEIGHT;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 6, y + 14);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 11; i++) {
+    const x = i * 94;
+    const h = 105 + (i % 4) * 44;
+
+    ctx.fillStyle = i % 2 ? "#202052" : "#15163f";
+    ctx.fillRect(x, HEIGHT - h, 80, h);
+
+    ctx.fillStyle = i % 3 ? "#ff5ccc" : "#57edff";
+
+    for (let y = HEIGHT - h + 18; y < HEIGHT - 20; y += 27) {
+      ctx.fillRect(x + 13, y, 8, 6);
+      ctx.fillRect(x + 47, y, 8, 6);
+    }
+  }
+}
+
+function drawIceBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#62bce5");
+  bg.addColorStop(0.65, "#c9f7ff");
+  bg.addColorStop(1, "#f4ffff");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.strokeStyle = "rgba(95,255,210,0.35)";
+  ctx.lineWidth = 15;
+  ctx.beginPath();
+  ctx.moveTo(0, 90);
+  ctx.quadraticCurveTo(230, 150, 430, 75);
+  ctx.quadraticCurveTo(650, 15, 960, 105);
+  ctx.stroke();
+
+  drawMountain(0, 215, 310, 255, "#76b5d0", "#f1ffff");
+  drawMountain(200, 138, 360, 330, "#6099bb", "#f7ffff");
+  drawMountain(520, 180, 320, 290, "#70afca", "#f8ffff");
+
+  for (let i = 0; i < 75; i++) {
+    const x = (i * 71 + frame * 0.5) % WIDTH;
+    const y = (i * 43 + frame * (i % 3 + 1)) % HEIGHT;
+    ctx.fillStyle = i % 2 ? "#ffffff" : "#d8f8ff";
+    ctx.fillRect(x, y, 3, 3);
+  }
+}
+
+function drawMagmaBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#241328");
+  bg.addColorStop(0.6, "#58211f");
+  bg.addColorStop(1, "#912d1f");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  for (let i = 0; i < 9; i++) {
+    const x = i * 124;
+    ctx.fillStyle = "#341a29";
+    ctx.fillRect(x, 85 + (i % 3) * 40, 96, 350);
+  }
+
+  glow("#ff652b", 18);
+  ctx.fillStyle = "#ff5a28";
+  ctx.fillRect(0, 490, WIDTH, 50);
+
+  ctx.fillStyle = "#ffc33e";
+  for (let x = 0; x < WIDTH; x += 92) {
+    ctx.fillRect(x + 15, 502 + Math.sin(frame * 0.1 + x) * 3, 44, 10);
+  }
+  noGlow();
+
+  for (let i = 0; i < 40; i++) {
+    const x = (i * 97 + 25) % WIDTH;
+    const y = 475 - ((frame * (i % 3 + 1) + i * 31) % 300);
+    ctx.fillStyle = i % 2 ? "#ff8c31" : "#ffd350";
+    ctx.fillRect(x, y, 3, 5);
+  }
+}
+
+function drawStormBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#101a3e");
+  bg.addColorStop(0.6, "#35446b");
+  bg.addColorStop(1, "#192345");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  for (let i = 0; i < 8; i++) {
+    ctx.fillStyle = i % 2 ? "#27345a" : "#1d294b";
+    ctx.fillRect(i * 130 - 30, 60 + (i % 3) * 32, 180, 60);
+  }
+
+  ctx.fillStyle = "#19223f";
+  ctx.fillRect(70, 150, 120, 310);
+  ctx.fillRect(770, 110, 120, 350);
+  ctx.fillRect(420, 190, 115, 270);
+
+  ctx.strokeStyle = "rgba(174,223,255,0.35)";
+  for (let i = 0; i < 85; i++) {
+    const x = (i * 53 + frame * 3) % WIDTH;
+    const y = (i * 31 + frame * 5) % HEIGHT;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x - 7, y + 17);
+    ctx.stroke();
+  }
+}
+
+function drawJungleBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#173b42");
+  bg.addColorStop(0.6, "#2b704f");
+  bg.addColorStop(1, "#75ae62");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.fillStyle = "rgba(132,236,255,0.35)";
+  ctx.fillRect(430, 55, 105, 365);
+
+  for (let i = 0; i < 8; i++) {
+    const x = i * 140 - 30;
+    ctx.fillStyle = "#25442e";
+    ctx.fillRect(x + 43, 80, 34, 360);
+    ctx.fillStyle = "#1d5d38";
+    ctx.fillRect(x, 55, 120, 85);
+  }
+
+  ctx.strokeStyle = "#82cb52";
+  ctx.lineWidth = 5;
+
+  for (let x = 50; x < WIDTH; x += 160) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.quadraticCurveTo(x + 25, 70, x - 5, 155);
+    ctx.stroke();
+  }
+
+  glow("#efff76", 9);
+  for (let i = 0; i < 24; i++) {
+    ctx.fillStyle = "#efff76";
+    ctx.fillRect((i * 97 + frame * 0.4) % WIDTH, 100 + (i * 59) % 330, 3, 3);
+  }
+  noGlow();
+}
+
+function drawCrystalBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#151637");
+  bg.addColorStop(0.6, "#30215e");
+  bg.addColorStop(1, "#172e55");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  const crystals = [
+    [70, 340, 45, 120, "#7ff6ff"],
+    [140, 385, 35, 80, "#b680ff"],
+    [790, 335, 48, 130, "#ff7de8"],
+    [850, 390, 35, 75, "#7ff6ff"],
+    [260, 420, 30, 50, "#a77aff"],
+    [665, 415, 32, 55, "#71eaff"]
+  ];
+
+  for (const [x, y, w, h, color] of crystals) {
+    glow(color, 13);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x + w / 2, y);
+    ctx.lineTo(x + w, y + h);
+    ctx.lineTo(x, y + h);
+    ctx.fill();
+    noGlow();
+  }
+
+  for (let i = 0; i < 45; i++) {
+    ctx.fillStyle = i % 2 ? "#a8f6ff" : "#ff9bea";
+    ctx.fillRect((i * 83) % WIDTH, (i * 37 + frame * 0.4) % HEIGHT, 2, 2);
+  }
+}
+
+function drawMoonBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#050a22");
+  bg.addColorStop(1, "#15234d");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  drawStars(90);
+
+  glow("#72bfff", 18);
+  ctx.fillStyle = "#4a9ad5";
+  ctx.beginPath();
+  ctx.arc(770, 105, 73, 0, Math.PI * 2);
+  ctx.fill();
+  noGlow();
+
+  ctx.fillStyle = "#7d8bab";
+  ctx.fillRect(0, 455, WIDTH, 85);
+
+  ctx.fillStyle = "#425374";
+  ctx.fillRect(65, 290, 150, 155);
+  ctx.fillRect(745, 270, 140, 175);
+}
+
+function drawWaterBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#087798");
+  bg.addColorStop(0.55, "#149db2");
+  bg.addColorStop(1, "#063a60");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  /* Glass dome lines */
+  ctx.strokeStyle = "rgba(201,255,255,0.55)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(WIDTH / 2, 520, 510, Math.PI, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(168,249,255,0.22)";
+  for (let i = 0; i < 6; i++) {
+    ctx.beginPath();
+    ctx.arc(WIDTH / 2, 520, 220 + i * 55, Math.PI, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  /* Fish */
+  for (let i = 0; i < 12; i++) {
+    const x = (i * 110 + frame * (i % 2 ? 0.7 : -0.5)) % (WIDTH + 100) - 50;
+    const y = 75 + (i * 57) % 250;
+
+    ctx.fillStyle = i % 3 === 0 ? "#ffd36a" : i % 3 === 1 ? "#ff93ce" : "#98edff";
+    ctx.fillRect(x, y, 20, 8);
+    ctx.fillRect(x - 7, y + 2, 7, 4);
+  }
+
+  /* Coral */
+  ctx.fillStyle = "#ff7db4";
+  ctx.fillRect(50, 410, 18, 50);
+  ctx.fillRect(78, 425, 15, 35);
+  ctx.fillStyle = "#7de783";
+  ctx.fillRect(870, 405, 14, 55);
+  ctx.fillRect(895, 425, 18, 35);
+
+  for (let i = 0; i < 28; i++) {
+    ctx.fillStyle = "rgba(220,255,255,0.55)";
+    ctx.fillRect((i * 83) % WIDTH, (HEIGHT - ((frame * 0.7 + i * 39) % 500)), 3, 6);
+  }
+}
+
+function drawRockBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#1e242d");
+  bg.addColorStop(0.6, "#51483d");
+  bg.addColorStop(1, "#241f21");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  /* Temple faces */
+  ctx.fillStyle = "#655947";
+  ctx.fillRect(80, 120, 150, 270);
+  ctx.fillRect(735, 120, 150, 270);
+
+  ctx.fillStyle = "#302d2a";
+  ctx.fillRect(115, 180, 35, 22);
+  ctx.fillRect(165, 180, 35, 22);
+  ctx.fillRect(770, 180, 35, 22);
+  ctx.fillRect(820, 180, 35, 22);
+
+  /* Dripping water */
+  ctx.strokeStyle = "rgba(130,222,255,0.45)";
+  for (let i = 0; i < 20; i++) {
+    const x = (i * 69) % WIDTH;
+    const y = (frame * 1.5 + i * 53) % 220;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y + 18);
+    ctx.stroke();
+  }
+
+  /* Dust */
+  for (let i = 0; i < 35; i++) {
+    ctx.fillStyle = "rgba(240,220,170,0.35)";
+    ctx.fillRect((i * 89 + frame * 0.2) % WIDTH, (i * 47) % HEIGHT, 2, 2);
+  }
+}
+
+function drawBlackHoleBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#04051a");
+  bg.addColorStop(0.6, "#160c36");
+  bg.addColorStop(1, "#07132c");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  drawStars(105);
+
+  /* Galaxy / black hole */
+  glow("#bd72ff", 28);
+  ctx.strokeStyle = "#8d5aff";
+  ctx.lineWidth = 18;
+  ctx.beginPath();
+  ctx.arc(785, 120, 98, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "#01010a";
+  ctx.beginPath();
+  ctx.arc(785, 120, 70, 0, Math.PI * 2);
+  ctx.fill();
+  noGlow();
+
+  /* Space monsters, visual only */
+  ctx.fillStyle = "rgba(135,92,205,0.4)";
+  ctx.fillRect(145, 125, 55, 30);
+  ctx.fillRect(135, 135, 12, 12);
+  ctx.fillRect(200, 135, 12, 12);
+
+  ctx.fillStyle = "#ff8ae9";
+  ctx.fillRect(160, 133, 6, 6);
+  ctx.fillRect(182, 133, 6, 6);
+
+  /* Space debris */
+  ctx.fillStyle = "#62738f";
+  ctx.fillRect(90, 270, 60, 12);
+  ctx.fillRect(180, 355, 34, 18);
+  ctx.fillRect(675, 330, 45, 12);
+}
+
+function drawHellBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#170812");
+  bg.addColorStop(0.6, "#4d151b");
+  bg.addColorStop(1, "#7e211d");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  /* Red moon */
+  glow("#ff4a3d", 20);
+  ctx.fillStyle = "#cf3837";
+  ctx.beginPath();
+  ctx.arc(790, 100, 60, 0, Math.PI * 2);
+  ctx.fill();
+  noGlow();
+
+  /* Fortress */
+  ctx.fillStyle = "#25111b";
+  ctx.fillRect(50, 220, 150, 230);
+  ctx.fillRect(760, 190, 155, 260);
+  ctx.fillRect(385, 255, 190, 195);
+
+  /* Demon statues */
+  ctx.fillStyle = "#3e1a24";
+  ctx.fillRect(105, 155, 58, 120);
+  ctx.fillRect(800, 125, 58, 120);
+
+  const flashEyes = suddenDeath && Math.floor(frame / 15) % 2 === 0;
+  ctx.fillStyle = flashEyes ? "#ffef55" : "#ff3939";
+  ctx.fillRect(118, 190, 9, 8);
+  ctx.fillRect(141, 190, 9, 8);
+  ctx.fillRect(813, 160, 9, 8);
+  ctx.fillRect(836, 160, 9, 8);
+
+  /* Chains */
+  ctx.strokeStyle = "#7b5450";
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(0, 60);
+  ctx.lineTo(250, 210);
+  ctx.lineTo(440, 80);
+  ctx.stroke();
+
+  /* Fire and reaching hands */
+  glow("#ff622d", 15);
+  ctx.fillStyle = "#ff5a29";
+  ctx.fillRect(0, 485, WIDTH, 55);
+
+  for (let x = 35; x < WIDTH; x += 100) {
+    const handY = 455 + Math.sin(frame * 0.08 + x) * 7;
+    ctx.fillStyle = "#852322";
+    ctx.fillRect(x, handY, 13, 40);
+    ctx.fillRect(x - 12, handY + 5, 12, 9);
+    ctx.fillRect(x + 13, handY + 5, 12, 9);
+  }
+  noGlow();
+}
+
+function drawBackground() {
+  if (currentStage.theme === "practice") drawPracticeBackground();
+  if (currentStage.theme === "sky") drawSkyBackground();
+  if (currentStage.theme === "neon") drawNeonBackground();
+  if (currentStage.theme === "ice") drawIceBackground();
+  if (currentStage.theme === "magma") drawMagmaBackground();
+  if (currentStage.theme === "storm") drawStormBackground();
+  if (currentStage.theme === "jungle") drawJungleBackground();
+  if (currentStage.theme === "crystal") drawCrystalBackground();
+  if (currentStage.theme === "moon") drawMoonBackground();
+  if (currentStage.theme === "water") drawWaterBackground();
+  if (currentStage.theme === "rock") drawRockBackground();
+  if (currentStage.theme === "blackhole") drawBlackHoleBackground();
+  if (currentStage.theme === "hell") drawHellBackground();
+}
+
+/* ---------------------------
+   PLATFORM DRAWING
+---------------------------- */
+function drawPlatform(platform) {
+  let top = "#d4ecff";
+  let middle = "#6573a5";
+  let bottom = "#28355c";
+
+  const theme = currentStage.theme;
+
+  if (theme === "practice") {
+    top = "#aeb6be";
+    middle = "#707982";
+    bottom = "#3e464d";
+  }
+  if (theme === "sky") {
+    top = "#f9ffff";
+    middle = "#a6dce9";
+    bottom = "#5d97aa";
+  }
+  if (theme === "neon") {
+    top = "#55efff";
+    middle = "#304486";
+    bottom = "#161745";
+    glow("#4eeaff", 8);
+  }
+  if (theme === "ice") {
+    top = "#f2ffff";
+    middle = "#6bc9e7";
+    bottom = "#2e77a9";
+  }
+  if (theme === "magma") {
+    top = "#ff9142";
+    middle = "#713a39";
+    bottom = "#2e1826";
+    glow("#ff6e2e", 7);
+  }
+  if (theme === "storm") {
+    top = "#9fc7f1";
+    middle = "#4f638b";
+    bottom = "#222e50";
+  }
+  if (theme === "jungle") {
+    top = "#a7d36b";
+    middle = "#65864c";
+    bottom = "#324c31";
+  }
+  if (theme === "crystal") {
+    top = "#8ff7ff";
+    middle = "#6b4da0";
+    bottom = "#2e2457";
+    glow("#8cf5ff", 7);
+  }
+  if (theme === "moon") {
+    top = "#d7e1f1";
+    middle = "#71809f";
+    bottom = "#35435e";
+  }
+  if (theme === "water") {
+    top = "#a7ffff";
+    middle = "#268ba8";
+    bottom = "#09516f";
+    glow("#7dffff", 6);
+  }
+  if (theme === "rock") {
+    top = "#ccb07b";
+    middle = "#75624c";
+    bottom = "#3d342c";
+  }
+  if (theme === "blackhole") {
+    top = "#c88dff";
+    middle = "#554477";
+    bottom = "#211b3d";
+    glow("#c98cff", 7);
+  }
+  if (theme === "hell") {
+    top = "#ff803b";
+    middle = "#682d32";
+    bottom = "#2c111b";
+    glow("#ff592f", 7);
+  }
+
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.fillRect(platform.x + 5, platform.y + platform.h, platform.w, 8);
+
+  ctx.fillStyle = middle;
+  ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
+
+  ctx.fillStyle = top;
+  ctx.fillRect(platform.x, platform.y, platform.w, 6);
+
+  ctx.fillStyle = bottom;
+  ctx.fillRect(platform.x, platform.y + platform.h - 5, platform.w, 5);
+
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  for (let x = platform.x + 14; x < platform.x + platform.w - 8; x += 35) {
+    ctx.fillRect(x, platform.y + 10, 11, 3);
+  }
+
+  if (platform.moving) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(platform.x + platform.w / 2 - 4, platform.y + 7, 8, 4);
+  }
+
+  noGlow();
+}
+
+/* ---------------------------
+   HAZARD DRAWING
+---------------------------- */
+function drawHazards() {
+  for (const h of activeHazards) {
+    const warningAlpha = h.warning > 0
+      ? 0.25 + Math.sin(frame * 0.3) * 0.14
+      : 1;
+
+    if (h.warning > 0) {
+      ctx.fillStyle = `rgba(255,235,90,${warningAlpha})`;
+
+      if (h.type === "fallingObject") {
+        ctx.beginPath();
+        ctx.ellipse(h.x + h.w / 2, 445, h.w * 0.9, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(h.x, h.y, h.w, h.h);
+      }
+
+      ctx.strokeStyle = "#fff16b";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(h.x, h.y, h.w, h.h);
+      continue;
+    }
+
+    glow(h.color, 10);
+
+    if (h.type === "fallingObject") {
+      ctx.fillStyle = h.color;
+
+      if (h.extra === "icicle") {
+        ctx.beginPath();
+        ctx.moveTo(h.x, h.y);
+        ctx.lineTo(h.x + h.w, h.y);
+        ctx.lineTo(h.x + h.w / 2, h.y + h.h);
+        ctx.fill();
+      } else if (h.extra === "anchor") {
+        ctx.fillRect(h.x + h.w / 2 - 4, h.y, 8, h.h - 16);
+        ctx.fillRect(h.x, h.y + h.h - 18, h.w, 12);
+      } else {
+        ctx.fillRect(h.x, h.y, h.w, h.h);
+      }
+    }
+
+    if (h.type === "windZone") {
+      ctx.strokeStyle = h.color;
+      ctx.lineWidth = 3;
+
+      for (let i = 0; i < 6; i++) {
+        const y = h.y + 10 + i * 9;
+        const x = h.direction === 1
+          ? h.x + ((frame * 5 + i * 35) % h.w)
+          : h.x + h.w - ((frame * 5 + i * 35) % h.w);
+
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + h.direction * 45, y - 5);
+        ctx.stroke();
+      }
+    }
+
+    if (h.type === "strike") {
+      ctx.fillStyle = h.color;
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(h.x + h.w / 2 - 5, h.y, 10, h.h);
+    }
+
+    if (h.type === "electricFloor" || h.type === "laser" || h.type === "templeBeam") {
+      ctx.fillStyle = h.color;
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(h.x, h.y + h.h / 2 - 2, h.w, 4);
+    }
+
+    if (h.type === "ventBlast" || h.type === "flamePillar") {
+      ctx.fillStyle = h.color;
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.fillStyle = "#fff1a4";
+      ctx.fillRect(h.x + 9, h.y + 10, h.w - 18, h.h - 15);
+    }
+
+    if (h.type === "snowstorm" || h.type === "mist") {
+      ctx.fillStyle = h.type === "snowstorm"
+        ? "rgba(230,255,255,0.28)"
+        : "rgba(220,250,255,0.35)";
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+
+      for (let i = 0; i < 35; i++) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(
+          h.x + (i * 47 + frame * 2) % h.w,
+          h.y + (i * 23 + frame) % h.h,
+          3,
+          3
+        );
+      }
+    }
+
+    if (h.type === "whirlpool" || h.type === "gravityZone") {
+      ctx.strokeStyle = h.color;
+      ctx.lineWidth = 5;
+
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(
+          h.x + h.w / 2,
+          h.y + h.h / 2,
+          h.w / 2 - i * 12,
+          frame * 0.08 + i,
+          frame * 0.08 + i + 4.8
+        );
+        ctx.stroke();
+      }
+    }
+
+    if (h.type === "tornado") {
+      ctx.fillStyle = h.color + "88";
+      ctx.fillRect(h.x + 12, h.y, h.w - 24, h.h);
+      ctx.fillRect(h.x + 5, h.y + 20, h.w - 10, 10);
+      ctx.fillRect(h.x, h.y + 45, h.w, 12);
+    }
+
+    if (h.type === "swoop" || h.type === "banana" ||
+        h.type === "mineCart" || h.type === "chainSweep" ||
+        h.type === "shark") {
+      ctx.fillStyle = h.color;
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+
+      if (h.type === "shark") {
+        ctx.fillStyle = "#ffffff";
+        for (let x = h.x + 50; x < h.x + h.w - 20; x += 13) {
+          ctx.fillRect(x, h.y + h.h - 10, 6, 7);
+        }
+      }
+    }
+
+    if (h.type === "volcano") {
+      ctx.fillStyle = "#55312c";
+      ctx.fillRect(h.x, h.y + 15, h.w, h.h - 15);
+      ctx.fillStyle = "#ff7d2e";
+      ctx.fillRect(h.x + 9, h.y, h.w - 18, 22);
+    }
+
+    if (h.type === "thunderClap") {
+      ctx.strokeStyle = h.color;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(h.x + h.w / 2, h.y + h.h / 2, 43, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (h.type === "jellyfish") {
+      ctx.fillStyle = h.color;
+      ctx.fillRect(h.x + 5, h.y, h.w - 10, 22);
+      ctx.fillRect(h.x, h.y + 10, h.w, 12);
+
+      for (let x = h.x + 6; x < h.x + h.w - 3; x += 7) {
+        ctx.fillRect(x, h.y + 22, 3, h.h - 22);
+      }
+    }
+
+    if (h.type === "warpRift") {
+      ctx.strokeStyle = h.color;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(h.x + h.w / 2, h.y + h.h / 2, h.w / 2, frame * 0.1, frame * 0.1 + 5);
+      ctx.stroke();
+    }
+
+    if (h.type === "lightningBall") {
+      ctx.fillStyle = h.color;
+      ctx.beginPath();
+      ctx.arc(h.x + h.w / 2, h.y + h.h / 2, h.w / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (h.type === "thornPatch") {
+      ctx.fillStyle = "#5a993f";
+      for (let x = h.x; x < h.x + h.w; x += 12) {
+        ctx.beginPath();
+        ctx.moveTo(x, h.y + h.h);
+        ctx.lineTo(x + 6, h.y);
+        ctx.lineTo(x + 12, h.y + h.h);
+        ctx.fill();
+      }
+    }
+
+    if (h.type === "crystalSpike") {
+      ctx.fillStyle = h.color;
+      ctx.beginPath();
+      ctx.moveTo(h.x, h.y + h.h);
+      ctx.lineTo(h.x + h.w / 2, h.y);
+      ctx.lineTo(h.x + h.w, h.y + h.h);
+      ctx.fill();
+    }
+
+    if (h.type === "miner") {
+      ctx.fillStyle = "#8b7767";
+      ctx.fillRect(h.x, h.y + 8, h.w, h.h - 8);
+      ctx.fillStyle = "#ffcf61";
+      ctx.fillRect(h.x + 7, h.y, h.w - 14, 13);
+      ctx.fillStyle = "#7cf8ff";
+      ctx.fillRect(h.x - 9, h.y + 16, 8, 10);
+      ctx.fillRect(h.x + h.w + 1, h.y + 16, 8, 10);
+    }
+
+    if (h.type === "ufo") {
+      ctx.fillStyle = "#809cb8";
+      ctx.fillRect(h.x, h.y + 20, h.w, 18);
+      ctx.fillStyle = "#baf7ff";
+      ctx.fillRect(h.x + 70, h.y, 80, 22);
+      ctx.fillStyle = "#ff79dc";
+      ctx.fillRect(h.x + 20, h.y + 38, h.w - 40, 5);
+    }
+
+    if (h.type === "alien") {
+      ctx.fillStyle = "#82db73";
+      ctx.fillRect(h.x + 7, h.y + 10, h.w - 14, h.h - 10);
+      ctx.fillStyle = "#d6ffbd";
+      ctx.fillRect(h.x + 4, h.y, h.w - 8, 18);
+      ctx.fillStyle = "#161b34";
+      ctx.fillRect(h.x + 12, h.y + 7, 5, 5);
+      ctx.fillRect(h.x + 28, h.y + 7, 5, 5);
+    }
+
+    if (h.type === "risingLava") {
+      ctx.fillStyle = "#ff572a";
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.fillStyle = "#ffc83d";
+      for (let x = 0; x < WIDTH; x += 70) {
+        ctx.fillRect(x, h.y + 8, 35, 8);
+      }
+    }
+
+    if (h.type === "risingWater") {
+      ctx.fillStyle = "rgba(63,205,235,0.65)";
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.strokeStyle = "#d5ffff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, h.y + 8);
+      for (let x = 0; x <= WIDTH; x += 40) {
+        ctx.lineTo(x, h.y + 8 + Math.sin(frame * 0.1 + x) * 5);
+      }
+      ctx.stroke();
+    }
+
+    if (h.type === "fireHands") {
+      ctx.fillStyle = h.color;
+      ctx.fillRect(h.x + 20, h.y, 20, h.h);
+      ctx.fillRect(h.x, h.y + 10, 18, 12);
+      ctx.fillRect(h.x + 42, h.y + 10, 18, 12);
+    }
+
+    if (h.type === "devil") {
+      ctx.fillStyle = "#4b1720";
+      ctx.fillRect(h.x + 35, h.y + 30, h.w - 70, h.h - 15);
+      ctx.fillStyle = "#ff4f3c";
+      ctx.fillRect(h.x + 58, h.y + 50, 14, 10);
+      ctx.fillRect(h.x + 108, h.y + 50, 14, 10);
+      ctx.fillStyle = "#e9d2a0";
+      ctx.fillRect(h.x + 20, h.y, 20, 35);
+      ctx.fillRect(h.x + h.w - 40, h.y, 20, 35);
+    }
+
+    noGlow();
+  }
+}
+
+/* ---------------------------
+   PLAYER GRAPHICS
+---------------------------- */
+function drawPlayer(player) {
+  if (player.invincible > 0 && Math.floor(player.invincible / 4) % 2 === 0) {
+    return;
+  }
+
+  const f = player.fighter;
+  const bob = Math.sin(frame * 0.12 + player.idleOffset) * 1.5;
+  const x = Math.floor(player.x);
+  const y = Math.floor(player.y + bob);
+
+  if (player.trailTimer > 0) {
+    ctx.fillStyle = f.element + "66";
+    ctx.fillRect(x - player.vx * 1.8, y + 15, player.w, 20);
+  }
+
+  if (player.ultimateTimer > 0) {
+    glow(f.element, 20);
+    ctx.fillStyle = f.element + "55";
+    ctx.fillRect(x - 20, y - 20, player.w + 40, player.h + 40);
+    noGlow();
+  }
+
+  /* Zephyr scarf only appears while moving */
+  if (f.style === "scarf" && Math.abs(player.vx) > 0.8) {
+    ctx.fillStyle = "#e9ffff";
+    const scarfX = player.facing === 1 ? x - 26 : x + player.w;
+    ctx.fillRect(scarfX, y + 16, 28, 7);
+    ctx.fillStyle = f.accent;
+    ctx.fillRect(scarfX - player.facing * 8, y + 23, 32, 5);
+  }
+
+  if (f.style === "cape") {
+    ctx.fillStyle = "#19366d";
+    const capeX = player.facing === 1 ? x - 10 : x + player.w - 4;
+    ctx.fillRect(capeX, y + 17, 15, 34);
+    ctx.fillStyle = "#f4d75d";
+    ctx.fillRect(capeX, y + 18, 4, 29);
+  }
+
+  if (f.style === "leaves") {
+    ctx.fillStyle = "#7bd65d";
+    ctx.fillRect(x - 7, y + 19, 8, 13);
+    ctx.fillRect(x + player.w - 1, y + 27, 9, 12);
+  }
+
+  if (f.style === "water") {
+    glow("#8effff", 8);
+    ctx.fillStyle = "#8effff";
+    ctx.fillRect(x - 8, y + 35, 6, 10);
+    ctx.fillRect(x + player.w + 2, y + 32, 6, 10);
+    noGlow();
+  }
+
+  if (f.style === "void") {
+    ctx.fillStyle = "#32135b";
+    ctx.fillRect(x - 8, y + 17, 10, 35);
+  }
+
+  if (f.style === "chains") {
+    ctx.strokeStyle = "#ff8737";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x - 8, y + 25);
+    ctx.lineTo(x + 2, y + 32);
+    ctx.lineTo(x - 7, y + 39);
+    ctx.stroke();
+  }
+
+  /* Legs */
+  ctx.fillStyle = f.dark;
+  ctx.fillRect(x + 7, y + player.h - 12, 9, 13);
+  ctx.fillRect(x + player.w - 16, y + player.h - 12, 9, 13);
+
+  /* Body */
+  ctx.fillStyle = f.dark;
+  ctx.fillRect(x + 3, y + 18, player.w - 6, player.h - 28);
+
+  ctx.fillStyle = f.color;
+  ctx.fillRect(x + 7, y + 20, player.w - 14, player.h - 31);
+
+  /* Chest element symbol */
+  ctx.fillStyle = f.element;
+  ctx.fillRect(x + player.w / 2 - 4, y + 29, 8, 8);
+
+  /* Head */
+  ctx.fillStyle = "#ffd3b2";
+  ctx.fillRect(x + 6, y + 3, player.w - 12, 20);
+
+  /* Hair / helmet */
+  ctx.fillStyle = f.hair;
+  ctx.fillRect(x + 4, y - 1, player.w - 8, 9);
+
+  if (f.style === "visor") {
+    ctx.fillStyle = "#221758";
+    ctx.fillRect(x + 5, y + 7, player.w - 10, 6);
+    ctx.fillStyle = "#ff70e8";
+    ctx.fillRect(x + 8, y + 8, player.w - 16, 2);
+  }
+
+  if (f.style === "armour") {
+    ctx.fillStyle = "#dcffff";
+    ctx.fillRect(x + 2, y - 3, player.w - 4, 10);
+    ctx.fillRect(x, y + 20, 9, 14);
+    ctx.fillRect(x + player.w - 9, y + 20, 9, 14);
+  }
+
+  if (f.style === "lava") {
+    glow("#ff7634", 9);
+    ctx.fillStyle = "#ff7634";
+    ctx.fillRect(x + 8, y + 23, 4, 17);
+    ctx.fillRect(x + 20, y + 35, 4, 13);
+    ctx.fillRect(x + player.w - 12, y + 26, 3, 17);
+    noGlow();
+  }
+
+  if (f.style === "crystal") {
+    ctx.fillStyle = "#e9dcff";
+    ctx.fillRect(x + 8, y - 9, 5, 10);
+    ctx.fillRect(x + player.w / 2 - 2, y - 13, 5, 14);
+    ctx.fillRect(x + player.w - 13, y - 9, 5, 10);
+  }
+
+  if (f.style === "space") {
+    ctx.fillStyle = "#eaf3ff";
+    ctx.fillRect(x + 3, y, player.w - 6, 22);
+    ctx.fillStyle = "#45638c";
+    ctx.fillRect(x + 7, y + 5, player.w - 14, 10);
+  }
+
+  if (f.style === "stone") {
+    ctx.fillStyle = "#89a35e";
+    ctx.fillRect(x + 2, y + 20, 7, 14);
+    ctx.fillRect(x + player.w - 9, y + 28, 7, 13);
+  }
+
+  if (f.style === "water") {
+    ctx.fillStyle = "#b9ffff";
+    ctx.fillRect(x + 3, y, player.w - 6, 22);
+    ctx.fillStyle = "#3090aa";
+    ctx.fillRect(x + 7, y + 5, player.w - 14, 10);
+  }
+
+  if (f.style === "void") {
+    ctx.fillStyle = "#180c2d";
+    ctx.fillRect(x + 5, y + 4, player.w - 10, 13);
+  }
+
+  /* Eye */
+  ctx.fillStyle = "#17213f";
+  const eyeX = player.facing === 1 ? x + player.w - 13 : x + 9;
+  ctx.fillRect(eyeX, y + 10, 4, 4);
+
+  /* Attack arm */
+  if (player.attackTimer > 0) {
+    if (f.id === "briar") {
+      ctx.fillStyle = "#72c85a";
+      const vineX = player.facing === 1 ? x + player.w : x - 52;
+      ctx.fillRect(vineX, y + 23, 52, 6);
+    } else {
+      ctx.fillStyle = "#ffd3b2";
+      const armX = player.facing === 1 ? x + player.w : x - 16;
+      ctx.fillRect(armX, y + 22, 17, 8);
+    }
+  }
+
+  /* Air attack */
+  if (player.airAttackTimer > 0) {
+    ctx.fillStyle = "#ffd3b2";
+    ctx.fillRect(x + 8, y + player.h - 8, player.w - 16, 18);
+    ctx.fillStyle = f.dark;
+    ctx.fillRect(x + 6, y + player.h + 6, player.w - 12, 7);
+  }
+
+  /* Special effects */
+  if (player.specialTimer > 0) {
+    glow(f.element, 12);
+    ctx.strokeStyle = f.element;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(x + player.w / 2, y + player.h / 2, 28, frame * 0.2, frame * 0.2 + 4.8);
+    ctx.stroke();
+    noGlow();
+  }
+
+  /* Fighter-specific shields */
+  if (player.shielding) {
+    glow(player.parryTimer > 0 ? "#ffffff" : f.element, 14);
+
+    if (f.style === "armour") {
+      ctx.fillStyle = "rgba(220,255,255,0.45)";
+      ctx.fillRect(x - 9, y - 7, player.w + 18, player.h + 14);
+    } else if (f.style === "leaves") {
+      ctx.strokeStyle = "#a8f06d";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(x + player.w / 2, y + player.h / 2, player.w / 1.2, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (f.style === "chains") {
+      ctx.strokeStyle = "#ff8737";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(x + player.w / 2, y + player.h / 2, player.w / 1.2, frame * 0.1, frame * 0.1 + 5.5);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = player.parryTimer > 0 ? "#ffffff" : f.element;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x + player.w / 2, y + player.h / 2, player.w / 1.2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    noGlow();
+  }
+
+  if (player.stunned > 0) {
+    ctx.fillStyle = "#fff363";
+    ctx.fillRect(x + 2, y - 13, 7, 7);
+    ctx.fillRect(x + player.w - 8, y - 19, 7, 7);
+  }
+}
+
+function drawProjectile(shot) {
+  glow(shot.color, 11);
+
+  if (shot.kind === "gravity" || shot.kind === "void") {
+    ctx.strokeStyle = shot.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(shot.x + shot.w / 2, shot.y + shot.h / 2, shot.w / 2, 0, Math.PI * 2);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = shot.color + "77";
+    ctx.fillRect(shot.x - 4, shot.y - 4, shot.w + 8, shot.h + 8);
+
+    ctx.fillStyle = shot.color;
+    ctx.fillRect(shot.x, shot.y, shot.w, shot.h);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(shot.x + 4, shot.y + 4, Math.max(4, shot.w / 3), Math.max(4, shot.h / 4));
+  }
+
+  noGlow();
+}
+
+function drawParticles() {
+  for (const particle of particles) {
+    ctx.globalAlpha = clamp(particle.life / particle.maxLife, 0, 1);
+    ctx.fillStyle = particle.color;
+    ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFloatingTexts() {
+  ctx.textAlign = "center";
+  ctx.font = "bold 16px Arial";
+
+  for (const text of floatingTexts) {
+    ctx.globalAlpha = clamp(text.life / 30, 0, 1);
+    glow(text.color, 8);
+    ctx.fillStyle = text.color;
+    ctx.fillText(text.text, text.x, text.y);
+    noGlow();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+}
+
+/* ---------------------------
+   HUD
+---------------------------- */
+function drawMeter(x, y, width, value, color, flip = false) {
+  ctx.fillStyle = "#0a1026";
+  ctx.fillRect(x, y, width, 12);
+
+  const filled = width * clamp(value / 100, 0, 1);
+
+  glow(color, 7);
+  ctx.fillStyle = color;
+
+  if (flip) {
+    ctx.fillRect(x + width - filled, y, filled, 12);
+  } else {
+    ctx.fillRect(x, y, filled, 12);
+  }
+
+  noGlow();
+
+  ctx.strokeStyle = "#eaf8ff";
+  ctx.strokeRect(x, y, width, 12);
+}
+
+function formatTime(frames) {
+  const totalSeconds = Math.max(0, Math.ceil(frames / 60));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function drawHUD() {
+  ctx.fillStyle = "rgba(7,12,34,0.82)";
+  ctx.fillRect(14, 12, 270, 72);
+  ctx.fillRect(WIDTH - 284, 12, 270, 72);
+
+  ctx.textAlign = "left";
+  ctx.font = "bold 18px Arial";
+  ctx.fillStyle = p1.fighter.element;
+  ctx.fillText(p1.fighter.name, 25, 37);
+
+  ctx.font = "12px Arial";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(
+    mode === "practice" ? "TRAINING" : `♥ ${p1.lives}    SHIELD`,
+    25,
+    58
+  );
+  drawMeter(106, 48, 155, p1.shield, "#78dfff");
+
+  ctx.textAlign = "right";
+  ctx.font = "bold 18px Arial";
+  ctx.fillStyle = p2.fighter.element;
+  ctx.fillText(p2.fighter.name, WIDTH - 25, 37);
+
+  ctx.font = "12px Arial";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(
+    mode === "practice" ? "CPU TRAINING" : `SHIELD    ♥ ${p2.lives}`,
+    WIDTH - 25,
+    58
+  );
+  drawMeter(WIDTH - 261, 48, 155, p2.shield, "#78dfff", true);
+
+  ctx.textAlign = "center";
+  ctx.font = "bold 19px Arial";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(currentStage.name, WIDTH / 2, 29);
+
+  if (mode !== "practice") {
+    ctx.font = "bold 23px Arial";
+    ctx.fillStyle = suddenDeath ? "#ffec60" : "#ffffff";
+    ctx.fillText(suddenDeath ? "SUDDEN DEATH" : formatTime(matchTime), WIDTH / 2, 56);
+  }
+
+  ctx.textAlign = "left";
+  ctx.font = "bold 51px Arial";
+  ctx.fillStyle = damageColor(p1.damage);
+  ctx.fillText(`${Math.floor(p1.damage)}%`, 22, HEIGHT - 22);
+
+  ctx.textAlign = "right";
+  ctx.fillStyle = damageColor(p2.damage);
+  ctx.fillText(`${Math.floor(p2.damage)}%`, WIDTH - 22, HEIGHT - 22);
+
+  ctx.textAlign = "left";
+  ctx.font = "bold 12px Arial";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText("ULT", 28, HEIGHT - 78);
+  drawMeter(60, HEIGHT - 90, 190, p1.meter, p1.fighter.element);
+
+  ctx.textAlign = "right";
+  ctx.fillText("ULT", WIDTH - 28, HEIGHT - 78);
+  drawMeter(WIDTH - 250, HEIGHT - 90, 190, p2.meter, p2.fighter.element, true);
+
+  ctx.textAlign = "left";
+}
+
+function drawCountdown() {
+  if (roundStarted && !suddenDeathStarting) return;
+
+  let words = "";
+
+  if (suddenDeathStarting) {
+    const number = Math.ceil(suddenTimer / 60);
+    words = number > 0 ? `SUDDEN DEATH!  ${number}` : "CLASH!";
+  } else {
+    const number = Math.ceil(countdown / 50);
+    words = number > 0 ? String(number) : "CLASH!";
+  }
+
+  ctx.textAlign = "center";
+  ctx.font = "bold 58px Arial";
+  glow("#fff36a", 17);
+  ctx.fillStyle = "#fff36a";
+  ctx.fillText(words, WIDTH / 2, HEIGHT / 2);
+  noGlow();
+  ctx.textAlign = "left";
+}
+
+/* ---------------------------
+   LOADING + TITLE SCREEN
+---------------------------- */
+function drawLoading() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#172b68");
+  bg.addColorStop(1, "#050817");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  drawStars(100);
+
+  const progress = clamp(loadingTimer / 165, 0, 1);
+
+  ctx.textAlign = "center";
+
+  ctx.font = "bold 48px Arial";
+  glow("#b7f7ff", 18);
+  ctx.fillStyle = "#b7f7ff";
+  ctx.fillText("ELEMENTS AWAKEN...", WIDTH / 2, 200);
+  noGlow();
+
+  ctx.fillStyle = "#111a3a";
+  ctx.fillRect(235, 275, 490, 26);
+
+  glow("#7cf7ff", 10);
+  ctx.fillStyle = "#7cf7ff";
+  ctx.fillRect(240, 280, 480 * progress, 16);
+  noGlow();
+
+  ctx.font = "bold 18px Arial";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(`${Math.floor(progress * 100)}%`, WIDTH / 2, 340);
+
+  const elements = [
+    "#d5ffff", "#fff06a", "#eaffff", "#ff9b32",
+    "#a8f06d", "#7ff6ff", "#8effff", "#d28aff"
+  ];
+
+  for (let i = 0; i < elements.length; i++) {
+    const angle = frame * 0.03 + i * Math.PI / 4;
+    const x = WIDTH / 2 + Math.cos(angle) * 210;
+    const y = 405 + Math.sin(angle) * 50;
+
+    glow(elements[i], 12);
+    ctx.fillStyle = elements[i];
+    ctx.fillRect(x, y, 14, 14);
+    noGlow();
+  }
+
+  ctx.textAlign = "left";
+}
+
+function drawTitle() {
+  const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  bg.addColorStop(0, "#1f3479");
+  bg.addColorStop(0.5, "#172657");
+  bg.addColorStop(1, "#080b20");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  drawStars(90, 420);
+
+  ctx.fillStyle = "rgba(84,217,232,0.12)";
+  ctx.fillRect(110 + Math.sin(frame * 0.02) * 30, 0, 120, HEIGHT);
+
+  ctx.fillStyle = "rgba(255,110,226,0.1)";
+  ctx.fillRect(710 + Math.sin(frame * 0.017) * 35, 0, 110, HEIGHT);
+
+  ctx.textAlign = "center";
+
+  glow("#b7f7ff", 18);
+  ctx.font = "bold 60px Arial";
+  ctx.fillStyle = "#b7f7ff";
+  ctx.fillText("SKY CLASH", WIDTH / 2, 118);
+  noGlow();
+
+  glow("#fff36a", 10);
+  ctx.font = "bold 25px Arial";
+  ctx.fillStyle = "#fff36a";
+  ctx.fillText("ELEMENTAL ARENA", WIDTH / 2, 157);
+  noGlow();
+
+  ctx.fillStyle = "rgba(5,9,32,0.8)";
+  ctx.fillRect(210, 205, 540, 205);
+  ctx.strokeStyle = "#77dfff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(210, 205, 540, 205);
+
+  ctx.font = "bold 21px Arial";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText("PRESS 1 — PLAYER VS CPU", WIDTH / 2, 250);
+  ctx.fillText("PRESS 2 — TWO PLAYERS", WIDTH / 2, 293);
+  ctx.fillText("PRESS 3 — PRACTICE MODE", WIDTH / 2, 336);
+
+  ctx.font = "13px Arial";
+  ctx.fillStyle = "#b8dcff";
+  ctx.fillText("Practice Mode: no lives, no arena hazards, training room.", WIDTH / 2, 374);
+  ctx.fillText(`Press M for sound: ${soundOn ? "ON" : "OFF"}`, WIDTH / 2, 395);
+
+  for (let i = 0; i < 6; i++) {
+    const f = fighters[i * 2];
+    const x = 55 + i * 160;
+    const y = 445 + Math.sin(frame * 0.08 + i) * 5;
+
+    ctx.fillStyle = f.dark;
+    ctx.fillRect(x + 9, y + 20, 34, 58);
+    ctx.fillStyle = f.color;
+    ctx.fillRect(x + 13, y + 23, 26, 48);
+    ctx.fillStyle = "#ffd3b2";
+    ctx.fillRect(x + 12, y + 3, 28, 20);
+    ctx.fillStyle = f.hair;
+    ctx.fillRect(x + 9, y - 1, 34, 9);
+
+    ctx.font = "bold 10px Arial";
+    ctx.fillStyle = f.element;
+    ctx.fillText(f.name, x + 26, y + 103);
+  }
+
+  ctx.textAlign = "left";
+}
+
+/* ---------------------------
+   ARCADE CHARACTER SELECT
+---------------------------- */
+function drawGridFighter(x, y, fighter, p1Here, p2Here) {
+  const selected = p1Here || p2Here;
+
+  ctx.fillStyle = selected ? fighter.element : "#172344";
+  ctx.fillRect(x, y, 135, 105);
+
+  ctx.fillStyle = "#0b1230";
+  ctx.fillRect(x + 4, y + 4, 127, 97);
+
+  ctx.fillStyle = fighter.dark;
+  ctx.fillRect(x + 49, y + 33, 37, 48);
+  ctx.fillStyle = fighter.color;
+  ctx.fillRect(x + 54, y + 37, 27, 39);
+  ctx.fillStyle = "#ffd3b2";
+  ctx.fillRect(x + 53, y + 18, 29, 20);
+  ctx.fillStyle = fighter.hair;
+  ctx.fillRect(x + 50, y + 14, 35, 8);
+
+  ctx.textAlign = "center";
+  ctx.font = "bold 12px Arial";
+  ctx.fillStyle = fighter.element;
+  ctx.fillText(fighter.name, x + 67, y + 94);
+
+  if (p1Here) {
+    ctx.strokeStyle = "#63e8ff";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x, y, 135, 105);
+    ctx.fillStyle = "#63e8ff";
+    ctx.fillText("P1", x + 18, y + 16);
+  }
+
+  if (p2Here) {
+    ctx.strokeStyle = mode === "vs" ? "#ff78d9" : "#b98cff";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x + 5, y + 5, 125, 95);
+    ctx.fillStyle = mode === "vs" ? "#ff78d9" : "#b98cff";
+    ctx.fillText(mode === "vs" ? "P2" : "CPU", x + 109, y + 16);
+  }
+
+  ctx.textAlign = "left";
+}
+
+function drawSelect() {
+  ctx.fillStyle = "#0c1537";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.textAlign = "center";
+  ctx.font = "bold 29px Arial";
+  ctx.fillStyle = "#b7f5ff";
+
+  if (selectStep === 0) {
+    ctx.fillText("CHOOSE YOUR FIGHTERS", WIDTH / 2, 39);
+
+    const startX = 195;
+    const startY = 62;
+
+    for (let i = 0; i < fighters.length; i++) {
+      const col = i % 4;
+      const row = Math.floor(i / 4);
+
+      drawGridFighter(
+        startX + col * 142,
+        startY + row * 112,
+        fighters[i],
+        i === p1Cursor,
+        i === p2Cursor
+      );
+    }
+
+    const f1 = fighters[p1Choice];
+    const f2 = fighters[p2Choice];
+
+    ctx.fillStyle = "rgba(5,10,30,0.82)";
+    ctx.fillRect(90, 405, 780, 112);
+
+    ctx.font = "bold 18px Arial";
+    ctx.fillStyle = f1.element;
+    ctx.fillText(`P1: ${f1.name}`, 245, 435);
+
+    ctx.fillStyle = f2.element;
+    ctx.fillText(`${mode === "vs" ? "P2" : "CPU"}: ${f2.name}`, 700, 435);
+
+    ctx.font = "12px Arial";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(f1.specialName, 245, 458);
+    ctx.fillText(f2.specialName, 700, 458);
+
+    ctx.font = "11px Arial";
+    ctx.fillStyle = "#ffe96b";
+    ctx.fillText(`Home: ${f1.homeStage}`, 245, 480);
+    ctx.fillText(`Home: ${f2.homeStage}`, 700, 480);
+
+    ctx.font = "13px Arial";
+    ctx.fillStyle = "#dceaff";
+
+    if (mode === "cpu" || mode === "practice") {
+      ctx.fillText(
+        `Difficulty: ${difficulty.toUpperCase()}  (1 Easy, 2 Medium, 3 Hard)`,
+        WIDTH / 2,
+        501
+      );
+
+      ctx.fillStyle = "#fff36a";
+      ctx.fillText("P1 uses A/W/S/D • Arrow keys choose CPU • F or ENTER continues", WIDTH / 2, 522);
+    } else {
+      ctx.fillStyle = "#fff36a";
+      ctx.fillText("P1 uses A/W/S/D • P2 uses Arrow keys • Both press F and K", WIDTH / 2, 510);
+    }
+  } else {
+    const stage = mode === "practice" ? practiceStage : stages[stageChoice];
+
+    ctx.fillText(mode === "practice" ? "PRACTICE MODE" : "CHOOSE A STAGE", WIDTH / 2, 48);
+
+    ctx.fillStyle = "#06102b";
+    ctx.fillRect(135, 78, 690, 325);
+
+    const oldStage = currentStage;
+    currentStage = stage;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(140, 83, 680, 315);
+    ctx.clip();
+
+    drawBackground();
+
+    for (const platform of stage.platforms) {
+      drawPlatform(platform);
+    }
+
+    ctx.restore();
+    currentStage = oldStage;
+
+    ctx.strokeStyle = "#b7f5ff";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(135, 78, 690, 325);
+
+    ctx.fillStyle = "rgba(5,10,30,0.85)";
+    ctx.fillRect(180, 420, 600, 76);
+
+    ctx.font = "bold 25px Arial";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(stage.name, WIDTH / 2, 450);
+
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "#dceaff";
+
+    if (mode === "practice") {
+      ctx.fillText("No hazards • no lives • CPU training opponent", WIDTH / 2, 474);
+      ctx.fillStyle = "#fff36a";
+      ctx.fillText("Press F or ENTER to begin • ESC goes back", WIDTH / 2, 514);
+    } else {
+      ctx.fillText("A / D or ← / → to choose • F or ENTER to begin", WIDTH / 2, 475);
+      ctx.fillStyle = "#fff36a";
+      ctx.fillText("Press ESC to return to fighter select", WIDTH / 2, 514);
+    }
+  }
+
+  ctx.textAlign = "left";
+}
+
+/* ---------------------------
+   GAME OVER
+---------------------------- */
+function drawGameOver() {
+  ctx.fillStyle = "rgba(3,7,24,0.78)";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  const winner = winnerText.startsWith(p1.fighter.name) ? p1 : p2;
+
+  ctx.textAlign = "center";
+
+  glow(winner.fighter.element, 18);
+  ctx.font = "bold 54px Arial";
+  ctx.fillStyle = winner.fighter.element;
+  ctx.fillText(winnerText, WIDTH / 2, HEIGHT / 2 - 30);
+  noGlow();
+
+  /* Winner pose */
+  ctx.fillStyle = winner.fighter.dark;
+  ctx.fillRect(WIDTH / 2 - 22, HEIGHT / 2 + 10, 44, 72);
+
+  ctx.fillStyle = winner.fighter.color;
+  ctx.fillRect(WIDTH / 2 - 16, HEIGHT / 2 + 14, 32, 56);
+
+  ctx.fillStyle = "#ffd3b2";
+  ctx.fillRect(WIDTH / 2 - 15, HEIGHT / 2 - 10, 30, 25);
+
+  ctx.fillStyle = winner.fighter.hair;
+  ctx.fillRect(WIDTH / 2 - 19, HEIGHT / 2 - 14, 38, 9);
+
+  ctx.font = "21px Arial";
+  ctx.fillStyle = "#dbeeff";
+  ctx.fillText("Press R or ENTER for character select", WIDTH / 2, HEIGHT / 2 + 132);
+
+  ctx.font = "14px Arial";
+  ctx.fillStyle = "#a9d7ff";
+  ctx.fillText("Press ESC to return to the title screen", WIDTH / 2, HEIGHT / 2 + 158);
+
+  ctx.textAlign = "left";
+}
+
+/* ---------------------------
+   MAIN GAME DRAW
+---------------------------- */
+function drawGame() {
+  ctx.save();
+
+  if (cameraZoom !== 1) {
+    ctx.translate(WIDTH / 2, HEIGHT / 2);
+    ctx.scale(cameraZoom, cameraZoom);
+    ctx.translate(-WIDTH / 2, -HEIGHT / 2);
+  }
+
+  if (screenShake > 0) {
+    ctx.translate(
+      (Math.random() - 0.5) * screenShake,
+      (Math.random() - 0.5) * screenShake
+    );
+
+    screenShake *= 0.82;
+
+    if (screenShake < 0.4) screenShake = 0;
+  }
+
+  drawBackground();
+
+  for (const platform of currentStage.platforms) {
+    drawPlatform(platform);
+  }
+
+  drawHazards();
+
+  for (const shot of projectiles) {
+    drawProjectile(shot);
+  }
+
+  drawParticles();
+
+  drawPlayer(p1);
+  drawPlayer(p2);
+
+  drawHUD();
+  drawFloatingTexts();
+  drawCountdown();
+
+  if (flashTimer > 0) {
+    ctx.fillStyle = "rgba(255,255,255,0.16)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  }
+
+  ctx.restore();
+
+  if (screen === "over") drawGameOver();
+}
+
+/* ---------------------------
+   MAIN LOOP
+---------------------------- */
+function gameLoop() {
+  if (screen === "play" && !gameOver) {
+    updateSuddenDeath();
+
+    if (!suddenDeathStarting) {
+      updateCountdown();
+    }
+
+    updatePlatforms();
+
+    updatePlayer(p1, p2);
+    updatePlayer(p2, p1);
+
+    if (!gameOver) {
+      updateProjectiles();
+      updateHazards();
+      updateMatchTimer();
+      checkFinalStockSuddenDeath();
+      updateParticles();
+
+      frame++;
+    }
+  } else {
+    updateMenu();
+    frame++;
+  }
+
+  if (screen === "loading") drawLoading();
+  if (screen === "title") drawTitle();
+  if (screen === "select") drawSelect();
+  if (screen === "play" || screen === "over") drawGame();
+
+  for (const key in justPressed) {
+    delete justPressed[key];
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
