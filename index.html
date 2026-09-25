@@ -5611,21 +5611,21 @@ function drawLoading() {
   ctx.fillStyle = "#ffffff";
   ctx.fillText("PRESS 1 — PLAYER VS CPU", WIDTH / 2, 250);
   ctx.fillText("PRESS 2 — TWO PLAYERS", WIDTH / 2, 293);
-  ctx.fillText("PRESS 3 — PRACTICE VS CPU", WIDTH / 2, 336);
+  ctx.fillText("PRESS 3 — PRACTICE VS CPU", WIDTH / 2, 336); ctx.fillText("PRESS 4 — PRACTICE TWO PLAYERS", WIDTH / 2, 368);
 
   ctx.font = "13px Arial";
   ctx.fillStyle = "#b8dcff";
   ctx.fillText(
-    "Practice Mode: no lives, no arena hazards, training room.",
-    WIDTH / 2,
-    374
-  );
+  "Practice: no lives, no arena hazards, grey training room.",
+  WIDTH / 2,
+  405
+);
 
   ctx.fillText(
-    `Press M for sound: ${soundOn ? "ON" : "OFF"}`,
-    WIDTH / 2,
-    395
-  );
+  `Press M for sound: ${soundOn ? "ON" : "OFF"}`,
+  WIDTH / 2,
+  426
+);
 
   ctx.textAlign = "left";
 }
