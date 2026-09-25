@@ -832,15 +832,15 @@ function resetPlayer(player, keepLives = true) {
 }
 
 function startMatch() {
-  currentStage = mode === "practice" ? practiceStage : stages[stageChoice];
+  currentStage =   (mode === "practice" || mode === "practicevs" || mode === "practicevs")     ? practiceStage     : stages[stageChoice];
 
   p1 = createPlayer(1, p1Choice, 300, 355, p1Controls);
   p2 = createPlayer(2, p2Choice, 620, 355, p2Controls);
 
-  if (mode === "practice") {
-    p1.lives = 99;
-    p2.lives = 99;
-  }
+ if (mode === "practice" || mode === "practicevs") {
+  p1.lives = 99;
+  p2.lives = 99;
+}
 
   projectiles = [];
   particles = [];
@@ -892,7 +892,27 @@ function moveGridCursor(cursor, direction) {
 
   return row * columns + col;
 }
+function resetPracticeMatch() {
+  if (
+    mode !== "practice" &&
+    mode !== "practicevs"
+  ) {
+    return;
+  }
 
+  resetPlayer(p1);
+  resetPlayer(p2);
+
+  p1.lives = 99;
+  p2.lives = 99;
+
+  projectiles = [];
+  particles = [];
+  activeHazards = [];
+
+  addText(WIDTH / 2, 150, "TRAINING RESET", "#e6e6e6");
+  playSound("menu");
+}
 function updateMenu() {
   /* Animated loading screen */
   if (screen === "loading") {
@@ -929,7 +949,12 @@ function updateMenu() {
       screen = "select";
       playSound("menu");
     }
-
+if (pressed("Digit4")) {
+  mode = "practicevs";
+  selectStep = 0;
+  screen = "select";
+  playSound("menu");
+}
     if (pressed("KeyM")) {
       soundOn = !soundOn;
       playSound("menu");
@@ -1021,7 +1046,7 @@ function updateMenu() {
 
     /* Stage select */
     if (selectStep === 1) {
-      if (mode === "practice") {
+      if (mode === "practice" || mode === "practicevs") {
         /* Practice always uses Training Room */
         if (pressed("KeyF") || pressed("Enter")) {
           startMatch();
@@ -1917,7 +1942,7 @@ function updatePlayer(player, opponent) {
     player.x < -175 ||
     player.x > WIDTH + 175
   ) {
-    if (mode === "practice") {
+    if (mode === "practice" || mode === "practicevs") {
       resetPlayer(player);
       addText(WIDTH / 2, 150, "TRAINING RESET", "#d8d8d8");
     } else {
@@ -5741,7 +5766,7 @@ function drawSelect() {
       ctx.fillText("P1 uses A/W/S/D • P2 uses Arrow keys • Both press F and K", WIDTH / 2, 510);
     }
   } else {
-    const stage = mode === "practice" ? practiceStage : stages[stageChoice];
+    const stage =   (mode === "practice" || mode === "practicevs")     ? practiceStage     : stages[stageChoice];
 
     ctx.fillText(mode === "practice" ? "PRACTICE MODE" : "CHOOSE A STAGE", WIDTH / 2, 48);
 
@@ -5893,6 +5918,12 @@ function drawGame() {
 ---------------------------- */
 function gameLoop() {
   if (screen === "play" && !gameOver) {
+    if (
+  pressed("KeyR") &&
+  (mode === "practice" || mode === "practicevs")
+) {
+  resetPracticeMatch();
+}
     updateSuddenDeath();
 
     if (!suddenDeathStarting) {
