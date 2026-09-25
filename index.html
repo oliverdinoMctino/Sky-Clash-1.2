@@ -1254,10 +1254,15 @@ function cpuInput(player, opponent) {
 }
 
 function playerInput(player) {
-  if (player.number === 2 && (mode === "cpu" || mode === "practice")) {
+  /* Only Player 2 becomes a CPU in these two modes */
+  if (
+    player.number === 2 &&
+    (mode === "cpu" || mode === "practice")
+  ) {
     return cpuInput(player, p1);
   }
 
+  /* In "vs" and "practicevs", both players use keyboard controls */
   const c = player.controls;
 
   return {
@@ -1270,7 +1275,6 @@ function playerInput(player) {
     ultimate: !!keys[c.ultimate]
   };
 }
-
 /* ---------------------------
    COMBAT
 ---------------------------- */
