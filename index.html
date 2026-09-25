@@ -1017,7 +1017,7 @@ if (pressed("Digit4")) {
       }
 
       /* CPU difficulty */
-      if (mode === "cpu" || mode === "practice" || mode === "practicevs") {
+      if (mode === "cpu" || mode === "practice") {
         if (pressed("Digit1")) difficulty = "easy";
         if (pressed("Digit2")) difficulty = "medium";
         if (pressed("Digit3")) difficulty = "hard";
@@ -1029,7 +1029,7 @@ if (pressed("Digit4")) {
       }
 
       /* Two-player confirmation */
-      if (mode === "vs") {
+      if (mode === "cpuif (mode === "vs" || mode === "practicevs") {" || mode === "practice") {
         if (pressed("KeyF") && pressed("KeyK")) {
           selectStep = 1;
           playSound("menu");
@@ -2470,11 +2470,10 @@ function updateProjectiles() {
 ---------------------------- */
 function loseLife(player) {
   /* Practice mode cannot lose */
-  if (mode === "practice") {
-    resetPlayer(player);
-    return;
-  }
-
+if (mode === "practice" || mode === "practicevs") {
+  resetPlayer(player);
+  return;
+}
   player.lives--;
   screenShake = 14;
   flashTimer = 8;
@@ -5697,7 +5696,7 @@ function drawGridFighter(x, y, fighter, p1Here, p2Here) {
     ctx.lineWidth = 3;
     ctx.strokeRect(x + 5, y + 5, 125, 95);
     ctx.fillStyle = mode === "vs" ? "#ff78d9" : "#b98cff";
-    ctx.fillText(mode === "vs" ? "P2" : "CPU", x + 109, y + 16);
+    ctx.fillText((mode === "cpu" || mode === "practice") ? "CPU" : "PLAYER 2", x + 109, y + 16);
   }
 
   ctx.textAlign = "left";
@@ -5741,7 +5740,7 @@ function drawSelect() {
     ctx.fillText(`P1: ${f1.name}`, 245, 435);
 
     ctx.fillStyle = f2.element;
-    ctx.fillText(`${mode === "vs" ? "P2" : "CPU"}: ${f2.name}`, 700, 435);
+    ctx.fillText(`${(mode === "cpu" || mode === "practice") ? "CPU" : "PLAYER 2"}: ${f2.name}`, 700, 435);
 
     ctx.font = "12px Arial";
     ctx.fillStyle = "#ffffff";
